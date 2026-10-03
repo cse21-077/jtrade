@@ -1,20 +1,27 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
-  <defs>
-    <linearGradient id="bgGrad" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#38bdf8"/>
-      <stop offset="50%" stop-color="#0284c7"/>
-      <stop offset="100%" stop-color="#0369a1"/>
-    </linearGradient>
-    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#0284c7" flood-opacity="0.4"/>
-    </filter>
-  </defs>
-  <rect width="512" height="512" rx="112" fill="url(#bgGrad)"/>
-  <!-- Grid Trading Lines accent -->
-  <path d="M64 128 H448 M64 256 H448 M64 384 H448" stroke="#ffffff" stroke-opacity="0.15" stroke-width="4" stroke-dasharray="8 8"/>
-  <path d="M128 64 V448 M256 64 V448 M384 64 V448" stroke="#ffffff" stroke-opacity="0.15" stroke-width="4" stroke-dasharray="8 8"/>
-  <!-- Bold Stylized J -->
-  <path d="M184 144 H344 V196 H292 V328 C292 376 256 408 204 408 C156 408 128 376 128 336 H184 C184 352 192 364 206 364 C224 364 236 348 236 324 V196 H184 V144 Z" fill="#ffffff" filter="url(#glow)"/>
-  <!-- Indicator Dots -->
-  <circle cx="344" cy="144" r="16" fill="#67e8f9"/>
+  <!-- Clean rounded icon canvas -->
+  <rect width="512" height="512" rx="112" fill="#ffffff"/>
+  
+  <!-- Subtle soft glow backdrop -->
+  <circle cx="256" cy="275" r="185" fill="#fdf0f4"/>
+  
+  <!-- Mascot circular head -->
+  <circle cx="256" cy="275" r="170" fill="#fbcfe8" stroke="#0f172a" stroke-width="12"/>
+  
+  <!-- Mascot Curly J Hair Swoop -->
+  <path d="M 215 130 C 215 65 260 30 295 15 C 312 8 326 35 292 56 C 260 76 244 100 244 135" stroke="#0f172a" stroke-width="12" stroke-linecap="round" fill="none"/>
+  
+  <!-- Eyes -->
+  <circle cx="205" cy="250" r="12" fill="#0f172a"/>
+  <circle cx="307" cy="250" r="12" fill="#0f172a"/>
+  
+  <!-- Subtle Blush Cheeks -->
+  <circle cx="178" cy="285" r="18" fill="#f472b6" fill-opacity="0.35"/>
+  <circle cx="334" cy="285" r="18" fill="#f472b6" fill-opacity="0.35"/>
+  
+  <!-- Cute Nose -->
+  <path d="M 252 270 V 286 H 262" stroke="#0f172a" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  
+  <!-- Gentle Smile -->
+  <path d="M 198 316 Q 256 372 314 316" stroke="#0f172a" stroke-width="12" stroke-linecap="round" fill="none"/>
 </svg>

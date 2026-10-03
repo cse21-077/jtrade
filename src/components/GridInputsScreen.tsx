@@ -1,20 +1,20 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   DerivAccount,
   LadderLevel,
   OrderDirection,
+  OrderType,
   MarketSymbol,
   PlacedOrder,
 } from '../types/trading';
 import {
   TrendingDown,
   TrendingUp,
-  Lock,
-  Unlock,
   ArrowRight,
-  Layers,
+  ChevronDown,
+  ChevronUp,
   Sparkles,
-  Zap,
+  Info,
 } from 'lucide-react';
 
 interface GridInputsScreenProps {
@@ -26,6 +26,8 @@ interface GridInputsScreenProps {
   onDeployOrders: (orders: PlacedOrder[]) => void;
 }
 
+type EasyPresetType = 'SELL_STOP' | 'SELL_LIMIT' | 'BUY_LIMIT' | 'BUY_STOP';
+
 export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
   account,
   spotPrice,
@@ -34,100 +36,98 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
   symbols,
   onDeployOrders,
 }) => {
-  // Parameters: u, x, t, s, y, z
-  const [autoUpdateSpot, setAutoUpdateSpot] = useState(true);
-  const [customSpotU, setCustomSpotU] = useState(4170.0);
-  const effectiveU = autoUpdateSpot ? spotPrice : customSpotU;
+  // Preset trading action: SELL STOP (default for 4170 -> 4165 down), SELL LIMIT, BUY LIMIT, BUY STOP
+  const [tradeAction, setTradeAction] = useState<EasyPresetType>('SELL_STOP');
 
-  const [direction, setDirection] = useState<OrderDirection>('SELL');
-  const [xOffset, setXOffset] = useState<number>(5.0); // e.g. 4170 - 5 = 4165
-  const [lotSizeT, setLotSizeT] = useState<number>(0.1); // t
-  const [ordersCountS, setOrdersCountS] = useState<number>(2); // s
-  const [stepY, setStepY] = useState<number>(0.1); // y
-  const [multiplesZ, setMultiplesZ] = useState<number>(4); // z
+  // Simple, intuitive trading fields
+  const [startPrice, setStartPrice] = useState<number>(4165.0);
+  const [stepSpacing, setStepSpacing] = useState<number>(0.1);
+  const [orderCount, setOrderCount] = useState<number>(10);
+  const [lotSize, setLotSize] = useState<number>(0.1);
   const [stepDirection, setStepDirection] = useState<'down' | 'up'>('down');
+  const [ordersPerLevel, setOrdersPerLevel] = useState<number>(1);
+  const [showFormulaDetails, setShowFormulaDetails] = useState(false);
 
-  // Base price calculation (u - x)
-  const basePriceP0 = useMemo(() => {
-    const p = direction === 'SELL' ? effectiveU - xOffset : effectiveU + xOffset;
-    return +p.toFixed(selectedSymbol.decimals);
-  }, [effectiveU, xOffset, direction, selectedSymbol.decimals]);
+  // Auto-align default start price when market spot updates or action changes
+  useEffect(() => {
+    if (spotPrice > 0) {
+      if (tradeAction === 'SELL_STOP' || tradeAction === 'BUY_LIMIT') {
+        // Below spot
+        const initial = +(spotPrice - 5.0).toFixed(selectedSymbol.decimals);
+        setStartPrice(initial > 0 ? initial : +(spotPrice * 0.99).toFixed(selectedSymbol.decimals));
+        setStepDirection('down');
+      } else {
+        // Above spot
+        const initial = +(spotPrice + 5.0).toFixed(selectedSymbol.decimals);
+        setStartPrice(initial);
+        setStepDirection('up');
+      }
+    }
+  }, [tradeAction, selectedSymbol]);
 
-  const handleBasePriceChange = (val: number) => {
-    if (isNaN(val)) return;
-    const calc = direction === 'SELL' ? effectiveU - val : val - effectiveU;
-    setXOffset(+Math.max(0, calc).toFixed(selectedSymbol.decimals));
-  };
+  // Derive direction & order type
+  const direction: OrderDirection = tradeAction.startsWith('SELL') ? 'SELL' : 'BUY';
+  const orderType: OrderType = tradeAction.includes('STOP') ? 'STOP' : 'LIMIT';
 
-  // Generate ladder levels
+  // Calculate ladder levels
   const ladderLevels: LadderLevel[] = useMemo(() => {
     const list: LadderLevel[] = [];
     let cumLots = 0;
-    const maxZ = Math.min(25, Math.max(0, multiplesZ));
+    const safeCount = Math.min(30, Math.max(1, orderCount));
 
-    for (let k = 0; k <= maxZ; k++) {
-      const stepOffset = k * stepY;
-      let targetPrice: number;
-
-      if (direction === 'SELL') {
-        targetPrice =
-          stepDirection === 'down'
-            ? effectiveU - xOffset - stepOffset
-            : effectiveU - xOffset + stepOffset;
-      } else {
-        targetPrice =
-          stepDirection === 'down'
-            ? effectiveU + xOffset - stepOffset
-            : effectiveU + xOffset + stepOffset;
-      }
+    for (let k = 0; k < safeCount; k++) {
+      const priceOffset = k * stepSpacing;
+      const targetPrice =
+        stepDirection === 'down'
+          ? startPrice - priceOffset
+          : startPrice + priceOffset;
 
       const rounded = +targetPrice.toFixed(selectedSymbol.decimals);
-      const totalLots = +(ordersCountS * lotSizeT).toFixed(3);
+      const totalLots = +(ordersPerLevel * lotSize).toFixed(3);
       cumLots = +(cumLots + totalLots).toFixed(3);
 
       const sign = stepDirection === 'down' ? '−' : '+';
-      const formulaStr = `${effectiveU.toFixed(selectedSymbol.decimals)} − ${xOffset} ${sign} (${k} × ${stepY})`;
+      const formulaStr = `${startPrice.toFixed(selectedSymbol.decimals)} ${sign} (${k} × ${stepSpacing})`;
 
       list.push({
         levelIndex: k,
         formula: formulaStr,
         price: rounded,
-        ordersCount: ordersCountS,
-        lotSize: lotSizeT,
+        ordersCount: ordersPerLevel,
+        lotSize,
         totalLotsAtLevel: totalLots,
         cumulativeLots: cumLots,
-        distanceFromSpot: +(effectiveU - rounded).toFixed(selectedSymbol.decimals),
+        distanceFromSpot: +(spotPrice - rounded).toFixed(selectedSymbol.decimals),
       });
     }
 
     return list;
   }, [
-    effectiveU,
-    xOffset,
-    direction,
+    startPrice,
+    stepSpacing,
+    orderCount,
+    lotSize,
+    ordersPerLevel,
     stepDirection,
-    stepY,
-    multiplesZ,
-    ordersCountS,
-    lotSizeT,
+    spotPrice,
     selectedSymbol.decimals,
   ]);
 
-  const totalLevels = ladderLevels.length;
-  const totalOrders = totalLevels * ordersCountS;
-  const totalVolume = +(totalOrders * lotSizeT).toFixed(2);
+  const totalOrders = ladderLevels.length * ordersPerLevel;
+  const totalVolume = +(totalOrders * lotSize).toFixed(2);
+  const endPrice = ladderLevels[ladderLevels.length - 1]?.price || startPrice;
 
   const handleDeploy = () => {
     const newOrders: PlacedOrder[] = [];
     ladderLevels.forEach((level) => {
       for (let s = 1; s <= level.ordersCount; s++) {
         newOrders.push({
-          id: `ORD-${Date.now().toString(36).toUpperCase()}-${level.levelIndex}-${s}`,
-          levelIndex: level.levelIndex,
+          id: `ORD-${Date.now().toString(36).toUpperCase()}-${level.levelIndex + 1}-${s}`,
+          levelIndex: level.levelIndex + 1,
           subIndex: s,
           symbol: selectedSymbol.symbol,
           direction,
-          orderType: 'LIMIT',
+          orderType,
           price: level.price,
           lotSize: level.lotSize,
           status: 'PENDING',
@@ -140,344 +140,350 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
   };
 
   return (
-    <div className="pb-32 pt-4 px-5 max-w-md mx-auto space-y-5 font-sans select-none bg-white min-h-screen">
+    <div className="pb-32 pt-3 px-5 max-w-md mx-auto space-y-4 font-sans select-none bg-white min-h-screen">
       {/* Top Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-black text-slate-900 tracking-tight">Grid Inputs</h2>
-          <p className="text-xs text-slate-400 font-medium mt-0.5">
-            Mathematical Order Ladder ($u − x − zy$)
+          <h2 className="text-2xl font-black text-slate-900 tracking-tight">Place Grid Orders</h2>
+          <p className="text-xs text-slate-400 font-medium">
+            {account.mt5Server ? `Connected to ${account.mt5Server}` : 'Demo Trading Desk'}
           </p>
         </div>
 
-        <span className="px-3 py-1 rounded-full bg-[#f4f5f7] text-slate-800 text-xs font-bold">
-          {totalOrders} Orders Ready
-        </span>
+        {/* Live Spot Pill */}
+        <div className="px-3 py-1.5 rounded-full bg-[#f4f5f7] text-slate-800 text-xs font-mono font-bold flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+          <span>Spot: {spotPrice.toFixed(selectedSymbol.decimals)}</span>
+        </div>
       </div>
 
       {/* Market Selector Chips */}
-      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1">
+      <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
         {symbols.map((sym) => {
           const isSelected = selectedSymbol.symbol === sym.symbol;
           return (
             <button
               key={sym.symbol}
               onClick={() => onSelectSymbol(sym)}
-              className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition cursor-pointer ${
+              className={`px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition cursor-pointer ${
                 isSelected
                   ? 'bg-[#18181b] text-white shadow-xs'
                   : 'bg-[#f4f5f7] text-slate-700 hover:bg-slate-200'
               }`}
             >
-              {sym.displayName}
+              {sym.displayName.split(' ')[0]}
             </button>
           );
         })}
       </div>
 
-      {/* Hero Card: Spot Price (u) with Live Wave Accent */}
-      <div className="bg-[#18181b] rounded-[32px] p-5 text-white shadow-sm flex flex-col justify-between">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-[11px] font-bold text-neutral-300 uppercase tracking-wider">
-              {selectedSymbol.displayName.split(' ')[0]} Spot Price (u)
-            </span>
-          </div>
-
-          <button
-            onClick={() => setAutoUpdateSpot(!autoUpdateSpot)}
-            className="px-2.5 py-1 rounded-full bg-neutral-800 hover:bg-neutral-700 text-[10px] font-bold text-neutral-300 flex items-center gap-1 cursor-pointer transition"
-          >
-            {autoUpdateSpot ? <Unlock className="w-3 h-3 text-emerald-400" /> : <Lock className="w-3 h-3 text-amber-400" />}
-            <span>{autoUpdateSpot ? 'Live Streaming' : 'Locked'}</span>
-          </button>
-        </div>
-
-        <div className="my-3 flex items-baseline justify-between">
-          <div className="text-3xl sm:text-4xl font-black font-mono tracking-tight">
-            {effectiveU.toFixed(selectedSymbol.decimals)}
-          </div>
-          <span className="text-xs font-bold text-neutral-400">USD</span>
-        </div>
-
-        <div className="text-[11px] text-neutral-400">
-          Base order will trigger from this price reference.
-        </div>
-      </div>
-
-      {/* Direction Toggle Pills */}
-      <div className="bg-[#f4f5f7] rounded-full p-1.5 flex gap-1.5">
+      {/* 4 Simple Trading Actions: Sell Stop, Buy Limit, Sell Limit, Buy Stop */}
+      <div className="bg-[#f4f5f7] rounded-2xl p-1 grid grid-cols-2 gap-1 text-xs font-bold">
         <button
-          onClick={() => setDirection('SELL')}
-          className={`flex-1 py-3 rounded-full text-xs font-extrabold flex items-center justify-center gap-2 transition cursor-pointer ${
-            direction === 'SELL'
-              ? 'bg-[#18181b] text-white shadow-sm'
+          type="button"
+          onClick={() => setTradeAction('SELL_STOP')}
+          className={`py-2 px-3 rounded-xl transition cursor-pointer flex flex-col items-center ${
+            tradeAction === 'SELL_STOP'
+              ? 'bg-[#18181b] text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          <TrendingDown className="w-4 h-4 text-rose-400" />
-          <span>SELL ORDERS (Short)</span>
-        </button>
-
-        <button
-          onClick={() => setDirection('BUY')}
-          className={`flex-1 py-3 rounded-full text-xs font-extrabold flex items-center justify-center gap-2 transition cursor-pointer ${
-            direction === 'BUY'
-              ? 'bg-[#18181b] text-white shadow-sm'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <TrendingUp className="w-4 h-4 text-emerald-400" />
-          <span>BUY ORDERS (Long)</span>
-        </button>
-      </div>
-
-      {/* Input Card 1: Offset from Spot (x) & 1st Order Price */}
-      <div className="bg-white rounded-[32px] p-5 border border-slate-100 shadow-[0_4px_20px_rgba(0,0,0,0.03)] space-y-4">
-        <div className="flex items-center justify-between pb-1 border-b border-slate-100">
-          <div className="flex items-center gap-2">
-            <span className="w-6 h-6 rounded-xl bg-[#f4f5f7] text-slate-900 text-xs font-mono font-bold flex items-center justify-center">
-              x
-            </span>
-            <span className="text-sm font-extrabold text-slate-900">Initial Offset (x)</span>
-          </div>
-          <span className="text-xs font-bold text-slate-500 font-mono">
-            {direction === 'SELL' ? 'u − x' : 'u + x'}
+          <span className="flex items-center gap-1">
+            <TrendingDown className="w-3.5 h-3.5 text-rose-400" />
+            <span>SELL STOP</span>
           </span>
-        </div>
+          <span className="text-[9px] font-normal opacity-70">Sell below spot (4165)</span>
+        </button>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div className="bg-[#f4f5f7] rounded-2xl p-3.5">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
-              Offset Distance (x)
-            </span>
-            <input
-              type="number"
-              step="any"
-              value={xOffset}
-              onChange={(e) => setXOffset(Math.max(0, parseFloat(e.target.value) || 0))}
-              className="w-full bg-transparent border-0 font-mono text-base font-bold text-slate-900 focus:outline-none"
-            />
-          </div>
+        <button
+          type="button"
+          onClick={() => setTradeAction('BUY_LIMIT')}
+          className={`py-2 px-3 rounded-xl transition cursor-pointer flex flex-col items-center ${
+            tradeAction === 'BUY_LIMIT'
+              ? 'bg-[#18181b] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <span className="flex items-center gap-1">
+            <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
+            <span>BUY LIMIT</span>
+          </span>
+          <span className="text-[9px] font-normal opacity-70">Buy dips below spot</span>
+        </button>
 
-          <div className="bg-[#dcf0fa]/60 rounded-2xl p-3.5 border border-sky-100">
-            <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider block mb-1">
-              Level 0 Price (u − x)
-            </span>
-            <input
-              type="number"
-              step="any"
-              value={basePriceP0}
-              onChange={(e) => handleBasePriceChange(parseFloat(e.target.value))}
-              className="w-full bg-transparent border-0 font-mono text-base font-black text-slate-900 focus:outline-none"
-            />
-          </div>
-        </div>
-        <p className="text-[11px] text-slate-500 leading-relaxed">
-          At Spot <strong>{effectiveU.toFixed(2)}</strong>, offset x={xOffset} sets Level 0 at <strong>{basePriceP0}</strong>.
-        </p>
+        <button
+          type="button"
+          onClick={() => setTradeAction('SELL_LIMIT')}
+          className={`py-2 px-3 rounded-xl transition cursor-pointer flex flex-col items-center ${
+            tradeAction === 'SELL_LIMIT'
+              ? 'bg-[#18181b] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <span className="flex items-center gap-1">
+            <TrendingDown className="w-3.5 h-3.5 text-rose-400" />
+            <span>SELL LIMIT</span>
+          </span>
+          <span className="text-[9px] font-normal opacity-70">Sell rallies above spot</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setTradeAction('BUY_STOP')}
+          className={`py-2 px-3 rounded-xl transition cursor-pointer flex flex-col items-center ${
+            tradeAction === 'BUY_STOP'
+              ? 'bg-[#18181b] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <span className="flex items-center gap-1">
+            <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
+            <span>BUY STOP</span>
+          </span>
+          <span className="text-[9px] font-normal opacity-70">Buy breakout above spot</span>
+        </button>
       </div>
 
-      {/* Input Card 2: Lot Size (t) & Orders per Price (s) */}
-      <div className="bg-white rounded-[32px] p-5 border border-slate-100 shadow-[0_4px_20px_rgba(0,0,0,0.03)] space-y-4">
-        <div className="grid grid-cols-2 gap-3.5">
-          {/* t */}
-          <div className="bg-[#f4f5f7] rounded-2xl p-3.5">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                Lot Size (t)
-              </span>
-              <span className="w-5 h-5 rounded-lg bg-white text-slate-900 text-[10px] font-bold flex items-center justify-center shadow-2xs">
-                t
-              </span>
-            </div>
-            <input
-              type="number"
-              step="any"
-              value={lotSizeT}
-              onChange={(e) => setLotSizeT(Math.max(0.001, parseFloat(e.target.value) || 0.01))}
-              className="w-full bg-transparent border-0 font-mono text-base font-bold text-slate-900 focus:outline-none"
-            />
-            <div className="flex gap-1 mt-2">
-              {[0.01, 0.05, 0.1, 0.5].map((preset) => (
-                <button
-                  key={preset}
-                  type="button"
-                  onClick={() => setLotSizeT(preset)}
-                  className={`flex-1 py-1 rounded-md text-[9px] font-bold transition cursor-pointer ${
-                    lotSizeT === preset
-                      ? 'bg-[#18181b] text-white'
-                      : 'bg-white text-slate-700 hover:bg-slate-200'
-                  }`}
-                >
-                  {preset}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* s */}
-          <div className="bg-[#f4f5f7] rounded-2xl p-3.5">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                Orders / Price (s)
-              </span>
-              <span className="w-5 h-5 rounded-lg bg-white text-slate-900 text-[10px] font-bold flex items-center justify-center shadow-2xs">
-                s
-              </span>
-            </div>
-            <input
-              type="number"
-              min="1"
-              max="20"
-              value={ordersCountS}
-              onChange={(e) => setOrdersCountS(Math.max(1, parseInt(e.target.value, 10) || 1))}
-              className="w-full bg-transparent border-0 font-mono text-base font-bold text-slate-900 focus:outline-none"
-            />
-            <p className="text-[10px] text-slate-500 mt-2 font-medium">
-              {ordersCountS} parallel order{ordersCountS > 1 ? 's' : ''} per rung
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Input Card 3: Step Interval (y) & Multiples of y (z) */}
-      <div className="bg-white rounded-[32px] p-5 border border-slate-100 shadow-[0_4px_20px_rgba(0,0,0,0.03)] space-y-4">
-        <div className="grid grid-cols-2 gap-3.5">
-          {/* y */}
-          <div className="bg-[#f4f5f7] rounded-2xl p-3.5">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                Step Distance (y)
-              </span>
-              <span className="w-5 h-5 rounded-lg bg-white text-slate-900 text-[10px] font-bold flex items-center justify-center shadow-2xs">
-                y
-              </span>
-            </div>
-            <input
-              type="number"
-              step="any"
-              value={stepY}
-              onChange={(e) => setStepY(Math.max(0.0001, parseFloat(e.target.value) || 0.1))}
-              className="w-full bg-transparent border-0 font-mono text-base font-bold text-slate-900 focus:outline-none"
-            />
-            <div className="flex gap-1 mt-2">
-              {[0.1, 0.25, 0.5, 1.0].map((step) => (
-                <button
-                  key={step}
-                  type="button"
-                  onClick={() => setStepY(step)}
-                  className={`flex-1 py-1 rounded-md text-[9px] font-bold transition cursor-pointer ${
-                    stepY === step
-                      ? 'bg-[#18181b] text-white'
-                      : 'bg-white text-slate-700 hover:bg-slate-200'
-                  }`}
-                >
-                  {step}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* z */}
-          <div className="bg-[#f4f5f7] rounded-2xl p-3.5">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                Multiples (z)
-              </span>
-              <span className="w-5 h-5 rounded-lg bg-white text-slate-900 text-[10px] font-bold flex items-center justify-center shadow-2xs">
-                z
-              </span>
-            </div>
-            <input
-              type="number"
-              min="1"
-              max="25"
-              value={multiplesZ}
-              onChange={(e) => setMultiplesZ(Math.max(1, parseInt(e.target.value, 10) || 1))}
-              className="w-full bg-transparent border-0 font-mono text-base font-bold text-slate-900 focus:outline-none"
-            />
-            <p className="text-[10px] text-slate-500 mt-2 font-medium">
-              {multiplesZ + 1} total levels (0 to {multiplesZ})
-            </p>
-          </div>
-        </div>
-
-        {/* Step Direction */}
-        <div className="pt-2 flex items-center justify-between text-xs border-t border-slate-100">
-          <span className="text-slate-500 font-semibold">Progression:</span>
-          <div className="flex gap-1.5">
-            <button
-              type="button"
-              onClick={() => setStepDirection('down')}
-              className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition cursor-pointer ${
-                stepDirection === 'down' ? 'bg-[#18181b] text-white' : 'bg-[#f4f5f7] text-slate-600'
-              }`}
-            >
-              Steps Going Down (−y)
-            </button>
-            <button
-              type="button"
-              onClick={() => setStepDirection('up')}
-              className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition cursor-pointer ${
-                stepDirection === 'up' ? 'bg-[#18181b] text-white' : 'bg-[#f4f5f7] text-slate-600'
-              }`}
-            >
-              Steps Going Up (+y)
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Deploy Card (High-Contrast Charcoal Banner) */}
-      <div className="bg-[#18181b] text-white rounded-[32px] p-5 shadow-md flex items-center justify-between">
+      {/* Main Order Settings Card */}
+      <div className="bg-white rounded-[28px] p-4 sm:p-5 border border-slate-100 shadow-[0_4px_20px_rgba(0,0,0,0.02)] space-y-3.5">
+        {/* Field 1: Start Price */}
         <div>
-          <span className="text-[10px] text-neutral-400 uppercase font-extrabold tracking-wider block">
-            Grid Total
-          </span>
-          <div className="text-lg font-black font-mono mt-0.5">
-            {totalOrders} Orders • {totalVolume} Lots
+          <div className="flex items-center justify-between text-xs mb-1">
+            <label className="font-bold text-slate-900">
+              First Order Price
+            </label>
+            <span className="text-[11px] font-mono font-medium text-slate-400">
+              Spot: {spotPrice.toFixed(selectedSymbol.decimals)}
+            </span>
           </div>
-          <span className="text-[11px] text-neutral-400">
-            {ladderLevels[0]?.price} to {ladderLevels[ladderLevels.length - 1]?.price}
-          </span>
+
+          <div className="relative">
+            <input
+              type="number"
+              step="any"
+              value={startPrice}
+              onChange={(e) => setStartPrice(parseFloat(e.target.value) || 0)}
+              className="w-full px-4 py-2.5 rounded-2xl bg-[#f4f5f7] border-0 font-mono text-base font-bold text-slate-900 focus:ring-2 focus:ring-slate-900"
+            />
+          </div>
+
+          {/* Quick presets for starting price relative to spot */}
+          <div className="flex gap-1.5 mt-1.5">
+            {[-5.0, -2.0, -1.0, 1.0, 2.0, 5.0].map((diff) => {
+              const p = +(spotPrice + diff).toFixed(selectedSymbol.decimals);
+              return (
+                <button
+                  key={diff}
+                  type="button"
+                  onClick={() => setStartPrice(p)}
+                  className="flex-1 py-1 rounded-lg bg-[#f4f5f7] hover:bg-slate-200 text-[10px] font-mono font-semibold text-slate-700 cursor-pointer transition"
+                >
+                  {diff > 0 ? `+${diff}` : diff}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Field 2 & 3: Spacing & How Many Orders */}
+        <div className="grid grid-cols-2 gap-3 pt-1">
+          {/* Spacing / Step */}
+          <div>
+            <div className="flex items-center justify-between text-xs mb-1">
+              <label className="font-bold text-slate-900">Spacing (Step)</label>
+              {/* Compact Progression Toggle */}
+              <div className="flex bg-[#f4f5f7] rounded-md p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setStepDirection('down')}
+                  className={`px-1.5 py-0.5 rounded text-[9px] font-bold cursor-pointer transition ${
+                    stepDirection === 'down' ? 'bg-[#18181b] text-white' : 'text-slate-500'
+                  }`}
+                  title="Subtract spacing each step"
+                >
+                  ↓ Down
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStepDirection('up')}
+                  className={`px-1.5 py-0.5 rounded text-[9px] font-bold cursor-pointer transition ${
+                    stepDirection === 'up' ? 'bg-[#18181b] text-white' : 'text-slate-500'
+                  }`}
+                  title="Add spacing each step"
+                >
+                  ↑ Up
+                </button>
+              </div>
+            </div>
+
+            <input
+              type="number"
+              step="any"
+              value={stepSpacing}
+              onChange={(e) => setStepSpacing(Math.max(0.001, parseFloat(e.target.value) || 0.1))}
+              className="w-full px-3.5 py-2.5 rounded-xl bg-[#f4f5f7] border-0 font-mono text-sm font-bold text-slate-900 focus:ring-2 focus:ring-slate-900"
+            />
+
+            <div className="flex gap-1 mt-1.5">
+              {[0.1, 0.25, 0.5, 1.0].map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setStepSpacing(s)}
+                  className={`flex-1 py-1 rounded-md text-[9px] font-bold transition cursor-pointer ${
+                    stepSpacing === s ? 'bg-[#18181b] text-white' : 'bg-[#f4f5f7] text-slate-600'
+                  }`}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* How Many Orders */}
+          <div>
+            <div className="flex items-center justify-between text-xs mb-1">
+              <label className="font-bold text-slate-900">How Many Orders</label>
+              <span className="text-[10px] text-slate-400 font-medium">Count</span>
+            </div>
+
+            <input
+              type="number"
+              min="1"
+              max="30"
+              value={orderCount}
+              onChange={(e) => setOrderCount(Math.max(1, parseInt(e.target.value, 10) || 1))}
+              className="w-full px-3.5 py-2.5 rounded-xl bg-[#f4f5f7] border-0 font-mono text-sm font-bold text-slate-900 focus:ring-2 focus:ring-slate-900"
+            />
+
+            <div className="flex gap-1 mt-1.5">
+              {[3, 5, 10, 20].map((cnt) => (
+                <button
+                  key={cnt}
+                  type="button"
+                  onClick={() => setOrderCount(cnt)}
+                  className={`flex-1 py-1 rounded-md text-[9px] font-bold transition cursor-pointer ${
+                    orderCount === cnt ? 'bg-[#18181b] text-white' : 'bg-[#f4f5f7] text-slate-600'
+                  }`}
+                >
+                  {cnt}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Field 4: Lot Size */}
+        <div className="pt-1">
+          <div className="flex items-center justify-between text-xs mb-1">
+            <label className="font-bold text-slate-900">Lot Size per Order</label>
+            <span className="text-[10px] text-slate-400 font-medium">Volume</span>
+          </div>
+
+          <div className="flex gap-2">
+            <input
+              type="number"
+              step="any"
+              value={lotSize}
+              onChange={(e) => setLotSize(Math.max(0.001, parseFloat(e.target.value) || 0.01))}
+              className="flex-1 px-3.5 py-2.5 rounded-xl bg-[#f4f5f7] border-0 font-mono text-sm font-bold text-slate-900 focus:ring-2 focus:ring-slate-900"
+            />
+
+            <div className="flex gap-1 items-center">
+              {[0.01, 0.05, 0.1, 0.5].map((l) => (
+                <button
+                  key={l}
+                  type="button"
+                  onClick={() => setLotSize(l)}
+                  className={`px-2.5 py-2 rounded-xl text-[10px] font-bold transition cursor-pointer ${
+                    lotSize === l ? 'bg-[#18181b] text-white' : 'bg-[#f4f5f7] text-slate-600'
+                  }`}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Clear Plain-English Order Summary & Deploy CTA */}
+      <div className="bg-[#18181b] text-white rounded-[28px] p-5 shadow-sm space-y-3">
+        <div>
+          <div className="flex items-center gap-1.5 text-[10px] font-bold text-neutral-400 uppercase tracking-wider">
+            <Sparkles className="w-3 h-3 text-[#fbcfe8]" />
+            <span>Ready to Place to Account</span>
+          </div>
+
+          {/* Clear plain summary */}
+          <div className="text-sm font-bold mt-1 text-neutral-100 leading-snug">
+            Placing {totalOrders} {direction} {orderType} orders of {lotSize} lots from{' '}
+            <span className="text-white font-mono">{startPrice.toFixed(selectedSymbol.decimals)}</span>{' '}
+            {stepDirection === 'down' ? 'down' : 'up'} to{' '}
+            <span className="text-white font-mono">{endPrice.toFixed(selectedSymbol.decimals)}</span>
+          </div>
+
+          <div className="text-[11px] text-neutral-400 font-mono mt-1">
+            Total volume: {totalVolume} Lots • Step spacing: {stepSpacing}
+          </div>
         </div>
 
         <button
           onClick={handleDeploy}
-          className="bg-white hover:bg-neutral-100 active:scale-95 text-slate-900 font-extrabold text-xs px-7 py-3.5 rounded-full shadow-md flex items-center gap-1.5 transition cursor-pointer shrink-0"
+          className="w-full py-3.5 rounded-full bg-white hover:bg-neutral-100 active:scale-98 text-slate-900 font-black text-sm shadow-md flex items-center justify-center gap-2 transition cursor-pointer"
         >
-          <span>Deploy</span>
+          <span>Place {totalOrders} Orders to Account</span>
           <ArrowRight className="w-4 h-4" />
         </button>
       </div>
 
-      {/* Ladder Rungs Preview Matrix */}
-      <div className="bg-white rounded-[32px] p-5 border border-slate-100 shadow-[0_4px_20px_rgba(0,0,0,0.03)] space-y-3">
-        <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-100">
-          <span className="font-extrabold text-slate-900">Ladder Matrix Breakdown</span>
-          <span className="text-[11px] font-mono text-slate-500 font-bold">
-            u − x − zy
-          </span>
+      {/* Order Ladder Preview (Shows the exact prices placed) */}
+      <div className="bg-white rounded-[28px] p-4 border border-slate-100 shadow-[0_4px_20px_rgba(0,0,0,0.02)] space-y-2">
+        <div className="flex items-center justify-between text-xs pb-1.5 border-b border-slate-100">
+          <span className="font-extrabold text-slate-900">Calculated Order Levels</span>
+          <button
+            type="button"
+            onClick={() => setShowFormulaDetails(!showFormulaDetails)}
+            className="text-[10px] font-semibold text-slate-400 hover:text-slate-700 flex items-center gap-1 cursor-pointer"
+          >
+            <span>Formula (u-x-zy)</span>
+            {showFormulaDetails ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+          </button>
         </div>
 
-        <div className="divide-y divide-slate-100 max-h-52 overflow-y-auto font-mono text-xs">
+        {/* Formula breakdown when toggled */}
+        {showFormulaDetails && (
+          <div className="p-2.5 rounded-xl bg-[#f4f5f7] text-[10px] font-mono text-slate-600 space-y-1">
+            <div>u = Spot ({spotPrice})</div>
+            <div>x = Offset ({(spotPrice - startPrice).toFixed(2)})</div>
+            <div>t = Lot Size ({lotSize})</div>
+            <div>y = Step Spacing ({stepSpacing})</div>
+            <div>z = {orderCount - 1} steps</div>
+          </div>
+        )}
+
+        {/* Clean order list */}
+        <div className="divide-y divide-slate-100 max-h-44 overflow-y-auto font-mono text-xs">
           {ladderLevels.map((lvl) => (
-            <div key={lvl.levelIndex} className="py-2.5 flex items-center justify-between">
+            <div key={lvl.levelIndex} className="py-2 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[#f4f5f7] text-slate-800">
-                  #{lvl.levelIndex}
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#f4f5f7] text-slate-800">
+                  #{lvl.levelIndex + 1}
                 </span>
-                <span className="text-[11px] text-slate-500">{lvl.formula}</span>
-              </div>
-              <div className="text-right">
-                <span className="font-black text-slate-900 block text-xs">
+                <span className="text-slate-600 font-bold text-xs">
                   {lvl.price.toFixed(selectedSymbol.decimals)}
                 </span>
-                <span className="text-[10px] text-slate-400">
-                  {lvl.ordersCount}x {lvl.lotSize}L
+              </div>
+
+              <div className="flex items-center gap-2 text-right">
+                <span
+                  className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                    direction === 'SELL' ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'
+                  }`}
+                >
+                  {direction} {orderType}
                 </span>
+                <span className="text-[10px] text-slate-400">{lvl.lotSize}L</span>
               </div>
             </div>
           ))}
