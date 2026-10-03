@@ -11,8 +11,6 @@ const DERIV_WS_ENDPOINTS = [
   'wss://green.derivws.com/websockets/v3',
 ];
 
-const PROVEN_APP_IDS = [16929, 36544, 62923, 1089];
-
 export class DerivService {
   private ws: WebSocket | null = null;
   // Default to 16929 (Official Deriv Production App ID) to avoid Cloudflare 520 on legacy 1089
@@ -20,7 +18,7 @@ export class DerivService {
   private token: string | null = null;
   private currentEndpointIndex: number = 0;
   private reconnectAttempts: number = 0;
-  private maxReconnectAttempts: number = 8;
+  private maxReconnectAttempts: number = DERIV_WS_ENDPOINTS.length - 1;
   private tickSubscribers: Map<string, Set<TickCallback>> = new Map();
   private statusSubscribers: Set<StatusCallback> = new Set();
   private activeSubscriptions: Set<string> = new Set();
@@ -63,6 +61,10 @@ export class DerivService {
 
   public getAccount(): DerivAccount {
     return { ...this.accountInfo };
+  }
+
+  public getAppId(): number {
+    return this.currentAppId;
   }
 
   public hasRealToken(): boolean {
@@ -154,6 +156,8 @@ export class DerivService {
       this.currentAppId = appId;
     }
 
+    this.currentEndpointIndex = 0;
+
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       this.ws.close();
     }
@@ -180,12 +184,6 @@ export class DerivService {
           this.reconnectAttempts++;
           this.currentEndpointIndex = (this.currentEndpointIndex + 1) % DERIV_WS_ENDPOINTS.length;
 
-          // If we completed a round across all servers, also try the next proven App ID
-          if (this.reconnectAttempts % DERIV_WS_ENDPOINTS.length === 0) {
-            const nextAppId = PROVEN_APP_IDS[(this.reconnectAttempts / DERIV_WS_ENDPOINTS.length) % PROVEN_APP_IDS.length];
-            this.currentAppId = nextAppId;
-          }
-
           const nextServer = DERIV_WS_ENDPOINTS[this.currentEndpointIndex];
           console.log(`Rotating to alternate Deriv server: ${nextServer} with App ID ${this.currentAppId}`);
           setTimeout(() => {
@@ -193,8 +191,10 @@ export class DerivService {
           }, 600);
         } else {
           this.accountInfo.isConnected = false;
-          this.notifyStatus(false, 'Deriv server connection failed. Please check internet connection.');
-          reject(new Error('Connection failed after trying all endpoints'));
+          this.isConnecting = false;
+          const message = `Could not connect to Deriv using App ID ${this.currentAppId}. Check that the App ID is registered to your Deriv app and that your network allows WebSocket connections.`;
+          this.notifyStatus(false, message);
+          reject(new Error(message));
         }
       };
 
@@ -245,7 +245,8 @@ export class DerivService {
           triggerFailover();
         };
 
-        this.ws.onclose = () => {
+        this.ws.onclose = (event) => {
+          console.warn(`Deriv WS closed on ${endpoint} (App ID: ${this.currentAppId}, code: ${event.code}, reason: ${event.reason || 'none'})`);
           if (!opened) {
             triggerFailover();
           } else {

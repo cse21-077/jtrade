@@ -20,7 +20,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
 
   // Token fields
   const [token, setToken] = useState('');
-  const [appId, setAppId] = useState<number>(16929);
+  const [appId, setAppId] = useState<number>(derivService.getAppId());
   const [showPassword, setShowPassword] = useState(false);
 
   const [loading, setLoading] = useState(false);
@@ -38,6 +38,11 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
       if (selectedMode === 'token') {
         if (!token.trim()) {
           setError('Please enter your Deriv API token (requires Read and Trade scopes).');
+          setLoading(false);
+          return;
+        }
+        if (!Number.isInteger(appId) || appId <= 0) {
+          setError('Enter the App ID registered to your Deriv application.');
           setLoading(false);
           return;
         }
@@ -210,33 +215,22 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
               </div>
               <p className="text-[10px] text-neutral-400 mt-1">Requires Read & Trade permissions</p>
 
-              <div className="mt-3 pt-2.5 border-t border-neutral-800 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] text-neutral-400 font-semibold">Deriv App ID:</span>
-                  <div className="flex gap-1">
-                    {[
-                      { id: 16929, label: '16929' },
-                      { id: 36544, label: '36544' },
-                      { id: 62923, label: '62923' },
-                    ].map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        disabled={loading || connectionSuccess}
-                        onClick={() => setAppId(item.id)}
-                        className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold transition cursor-pointer ${
-                          appId === item.id
-                            ? 'bg-white text-slate-900 shadow-2xs'
-                            : 'bg-[#27272a] text-neutral-400 hover:text-white'
-                        }`}
-                      >
-                        {item.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <p className="text-[9px] text-neutral-500">
-                  Default <strong>16929</strong> (Standard Deriv Web Client).
+              <div className="mt-3 pt-2.5 border-t border-neutral-800">
+                <label htmlFor="deriv-app-id" className="text-[10px] text-neutral-400 font-semibold block mb-1">
+                  Registered Deriv App ID
+                </label>
+                <input
+                  id="deriv-app-id"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={appId || ''}
+                  disabled={loading || connectionSuccess}
+                  onChange={(event) => setAppId(parseInt(event.target.value, 10) || 0)}
+                  className="w-full px-3 py-2 rounded-xl bg-[#27272a] border border-neutral-700 text-xs font-mono text-white focus:outline-none focus:border-neutral-500 disabled:opacity-50"
+                />
+                <p className="text-[9px] text-neutral-500 mt-1">
+                  Use the App ID created for your application in the Deriv developer dashboard.
                 </p>
               </div>
             </div>

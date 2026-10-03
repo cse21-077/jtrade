@@ -65,7 +65,7 @@ export const ConnectPortal: React.FC<ConnectPortalProps> = ({
     setLoading(true);
 
     try {
-      derivService.setToken(token);
+      derivService.setToken(token, derivService.getAppId());
       const acc = await derivService.connect(token);
       setLoading(false);
       if (acc.isConnected) {
