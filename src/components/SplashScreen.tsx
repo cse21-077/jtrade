@@ -1,35 +1,63 @@
 import React, { useState } from 'react';
-import { ArrowRight, Layers, Server, Key, Sparkles, Eye, EyeOff, ShieldCheck } from 'lucide-react';
+import { ArrowRight, Server, Key, Eye, EyeOff } from 'lucide-react';
 import { ConnectionMode, DerivAccount } from '../types/trading';
 import { derivService } from '../services/derivWs';
+import { MascotHead } from './MascotHead';
 
 interface SplashScreenProps {
   onConnected: (account: DerivAccount) => void;
 }
 
 export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
-  const [selectedMode, setSelectedMode] = useState<ConnectionMode>('mt5');
+  // Default directly to real Deriv API
+  const [selectedMode, setSelectedMode] = useState<ConnectionMode>('token');
 
   // MT5 fields
-  const [mt5Server, setMt5Server] = useState('Deriv-Demo');
+  const [mt5Server, setMt5Server] = useState('Deriv-Server');
   const [mt5Login, setMt5Login] = useState('');
   const [mt5Password, setMt5Password] = useState('');
-  const [mt5IsDemo, setMt5IsDemo] = useState(true);
+  const [mt5IsDemo, setMt5IsDemo] = useState(false);
 
   // Token fields
   const [token, setToken] = useState('');
+  const [appId, setAppId] = useState<number>(16929);
   const [showPassword, setShowPassword] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [connectionSuccess, setConnectionSuccess] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (connectionSuccess || loading) return;
+
     setError(null);
     setLoading(true);
 
     try {
-      if (selectedMode === 'mt5') {
+      if (selectedMode === 'token') {
+        if (!token.trim()) {
+          setError('Please enter your Deriv API token (requires Read and Trade scopes).');
+          setLoading(false);
+          return;
+        }
+        derivService.setToken(token, appId);
+        const acc = await derivService.connect(token, appId);
+        setLoading(false);
+
+        if (acc.isConnected && acc.loginId) {
+          // TURN MASCOT HEAD GREEN & AUTO-PROCEED
+          setConnectionSuccess(true);
+          setTimeout(() => {
+            onConnected(acc);
+          }, 900);
+        } else {
+          setError(
+            derivService.getLastError() ||
+              'Deriv Token failed authorization. Verify that Read and Trade are checked in Deriv.'
+          );
+        }
+      } else if (selectedMode === 'mt5') {
         if (!mt5Login.trim()) {
           setError('Please enter your MT5 Account ID (e.g. 1029384)');
           setLoading(false);
@@ -42,270 +70,108 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
           isDemo: mt5IsDemo,
         });
         setLoading(false);
-        onConnected(acc);
-      } else if (selectedMode === 'token') {
-        if (!token.trim()) {
-          setError('Please enter your Deriv API token');
-          setLoading(false);
-          return;
-        }
-        derivService.setToken(token);
-        const acc = await derivService.connect(token);
-        setLoading(false);
-        if (acc.isConnected) {
+
+        // TURN MASCOT HEAD GREEN & AUTO-PROCEED
+        setConnectionSuccess(true);
+        setTimeout(() => {
           onConnected(acc);
-        } else {
-          setError('Token authorization failed. Please check token permissions.');
-        }
-      } else {
-        // Demo
-        derivService.clearToken();
-        const acc = await derivService.connect();
-        setLoading(false);
-        onConnected(acc);
+        }, 900);
       }
     } catch (err: any) {
       setLoading(false);
-      setError(err?.message || 'Connection failed. Please verify credentials.');
-    }
-  };
-
-  const handleLaunchDemo = async () => {
-    setError(null);
-    setLoading(true);
-    try {
-      derivService.clearToken();
-      const acc = await derivService.connect();
-      setLoading(false);
-      onConnected(acc);
-    } catch {
-      setLoading(false);
-      setError('Sandbox initialization error.');
+      setError(err?.message || derivService.getLastError() || 'Connection failed.');
     }
   };
 
   return (
-    <div className="min-h-screen bg-white flex flex-col justify-between p-4 sm:p-6 max-w-md w-full mx-auto font-sans select-none">
-      {/* Top Header & Brand (Without "PWA Ready") */}
-      <div className="pt-2 px-1">
-        <div className="flex items-center gap-2.5">
-          <div className="w-10 h-10 rounded-2xl bg-[#18181b] text-white flex items-center justify-center font-black text-lg shadow-sm">
-            J
-          </div>
+    <div className="min-h-screen bg-white flex flex-col justify-center py-6 px-4 sm:px-6 max-w-md w-full mx-auto font-sans select-none space-y-4">
+
+      {/* Mascot Head Showcase Card: Turns Green on Success & Auto Proceeds */}
+      <div
+        className={`my-3 rounded-[32px] p-4 flex flex-col items-center justify-center relative overflow-hidden transition-all duration-500 border ${
+          connectionSuccess
+            ? 'bg-[#ecfdf5] border-emerald-200 shadow-md scale-102'
+            : 'bg-[#fdf0f4] border-pink-100/60 shadow-xs'
+        }`}
+      >
+        <MascotHead
+          status={
+            connectionSuccess
+              ? 'success'
+              : loading
+              ? 'connecting'
+              : error
+              ? 'error'
+              : 'idle'
+          }
+          size={140}
+          message={
+            selectedMode === 'token'
+              ? 'Authorizing Deriv API Token...'
+              : 'Authenticating MT5 Server...'
+          }
+        />
+      </div>
+
+      {/* Account Login Portal Card: Real Account Focused */}
+      <div className="bg-[#18181b] text-white rounded-[32px] p-5 shadow-md space-y-4">
+        <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-sm font-extrabold text-slate-900 tracking-tight">J-GRID TRADER</h1>
-            <p className="text-[11px] text-slate-400 font-medium">Deriv & MT5 Algorithmic Desk</p>
+            <h3 className="text-base font-bold text-white tracking-tight">Connect Real Account</h3>
+            <p className="text-[11px] text-neutral-400">Authenticate your Deriv account to trade live</p>
+          </div>
+          <div className="w-8 h-8 rounded-full bg-neutral-800 flex items-center justify-center text-emerald-400">
+            <div
+              className={`w-2.5 h-2.5 rounded-full ${
+                connectionSuccess
+                  ? 'bg-emerald-400 scale-125'
+                  : 'bg-emerald-500 animate-pulse'
+              }`}
+            />
           </div>
         </div>
 
-        {/* Progress dashes */}
-        <div className="flex items-center gap-2 mt-4">
-          <div className="h-1 flex-1 bg-slate-900 rounded-full" />
-          <div className="h-1 flex-1 bg-slate-900 rounded-full" />
-          <div className="h-1 flex-1 bg-slate-200 rounded-full" />
-        </div>
-      </div>
-
-      {/* Value Explanation Showcase Card */}
-      <div className="my-4 bg-[#fdf0f4] rounded-[32px] p-5 flex flex-col justify-between relative overflow-hidden shadow-xs border border-pink-100/60">
-        <div className="flex items-center justify-between mb-3">
-          <div className="w-12 h-12 rounded-full bg-[#fbcfe8] border-2 border-slate-900 flex items-center justify-center shadow-xs">
-            <span className="text-xl font-black text-slate-900">J</span>
-          </div>
-          <span className="px-3 py-1 rounded-full bg-white text-slate-800 text-[10px] font-bold shadow-2xs">
-            Formula: u − x − zy
-          </span>
-        </div>
-
-        <div>
-          <h2 className="text-2xl font-black text-slate-900 tracking-tight leading-tight">
-            Automate Buy & Sell Grids
-          </h2>
-          <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
-            Deploy mathematical position ladders with live Deriv spot prices: Spot <strong>u</strong> (4170) − Offset <strong>x</strong> (4165) − Step multiples <strong>zy</strong>.
-          </p>
-        </div>
-
-        {/* Core Value Badges */}
-        <div className="mt-4 grid grid-cols-2 gap-2">
-          <div className="bg-white/90 p-2.5 rounded-2xl border border-pink-100/80 flex items-center gap-2">
-            <div className="w-6 h-6 rounded-lg bg-[#dcf0fa] text-slate-900 flex items-center justify-center shrink-0">
-              <Layers className="w-3.5 h-3.5" />
-            </div>
-            <div className="text-[11px] font-bold text-slate-800 leading-tight">
-              Auto Ladder Engine
-            </div>
-          </div>
-
-          <div className="bg-white/90 p-2.5 rounded-2xl border border-pink-100/80 flex items-center gap-2">
-            <div className="w-6 h-6 rounded-lg bg-[#fbcfe8] text-slate-900 flex items-center justify-center shrink-0">
-              <Server className="w-3.5 h-3.5" />
-            </div>
-            <div className="text-[11px] font-bold text-slate-800 leading-tight">
-              Live MT5 Streaming
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Connection Sheet: Connect user's account right here (NO duplicate modal) */}
-      <div className="bg-[#18181b] rounded-[32px] p-5 text-white shadow-md">
-        {/* Connection Mode Selector */}
-        <div className="flex items-center justify-between gap-1 bg-[#27272a] p-1 rounded-full mb-3.5">
+        {/* Mode Selector Tabs: Deriv API vs MT5 */}
+        <div className="bg-[#27272a] p-1 rounded-full flex gap-1">
           <button
             type="button"
-            onClick={() => {
-              setSelectedMode('mt5');
-              setError(null);
-            }}
-            className={`flex-1 py-1.5 rounded-full text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1 ${
-              selectedMode === 'mt5'
-                ? 'bg-[#fbcfe8] text-slate-900 shadow-sm'
-                : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            <Server className="w-3 h-3" />
-            <span>Deriv MT5</span>
-          </button>
-
-          <button
-            type="button"
+            disabled={loading || connectionSuccess}
             onClick={() => {
               setSelectedMode('token');
               setError(null);
             }}
-            className={`flex-1 py-1.5 rounded-full text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1 ${
+            className={`flex-1 py-1.5 rounded-full text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 ${
               selectedMode === 'token'
-                ? 'bg-[#fbcfe8] text-slate-900 shadow-sm'
+                ? 'bg-white text-slate-900 shadow-sm'
                 : 'text-neutral-400 hover:text-white'
             }`}
           >
-            <Key className="w-3 h-3" />
-            <span>Deriv API</span>
+            <Key className="w-3.5 h-3.5" />
+            <span>Deriv API (Token)</span>
           </button>
 
           <button
             type="button"
+            disabled={loading || connectionSuccess}
             onClick={() => {
-              setSelectedMode('demo');
+              setSelectedMode('mt5');
               setError(null);
             }}
-            className={`flex-1 py-1.5 rounded-full text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1 ${
-              selectedMode === 'demo'
-                ? 'bg-[#fbcfe8] text-slate-900 shadow-sm'
+            className={`flex-1 py-1.5 rounded-full text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 ${
+              selectedMode === 'mt5'
+                ? 'bg-white text-slate-900 shadow-sm'
                 : 'text-neutral-400 hover:text-white'
             }`}
           >
-            <Sparkles className="w-3 h-3" />
-            <span>Demo</span>
+            <Server className="w-3.5 h-3.5" />
+            <span>MetaTrader 5 (MT5)</span>
           </button>
         </div>
 
         {error && (
-          <div className="mb-3 p-2.5 rounded-xl bg-rose-500/20 border border-rose-400/30 text-rose-300 text-xs font-medium">
+          <div className="p-3 rounded-xl bg-rose-500/20 border border-rose-400/40 text-rose-300 text-xs font-medium">
             {error}
           </div>
-        )}
-
-        {/* Direct MT5 Inputs */}
-        {selectedMode === 'mt5' && (
-          <form onSubmit={handleSubmit} className="space-y-2.5">
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-[10px] font-semibold text-neutral-400 block mb-1">
-                  Server
-                </label>
-                <select
-                  value={mt5Server}
-                  onChange={(e) => {
-                    setMt5Server(e.target.value);
-                    setMt5IsDemo(e.target.value.toLowerCase().includes('demo'));
-                  }}
-                  className="w-full px-3 py-2 rounded-xl bg-[#27272a] border border-neutral-700 text-xs text-white focus:outline-none"
-                >
-                  <option value="Deriv-Demo">Deriv-Demo</option>
-                  <option value="Deriv-Server">Deriv-Server</option>
-                  <option value="Deriv-SVG">Deriv-SVG</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="text-[10px] font-semibold text-neutral-400 block mb-1">
-                  Type
-                </label>
-                <div className="flex gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setMt5IsDemo(true)}
-                    className={`flex-1 py-2 rounded-xl text-[10px] font-bold transition ${
-                      mt5IsDemo ? 'bg-white text-slate-900' : 'bg-[#27272a] text-neutral-400'
-                    }`}
-                  >
-                    Demo
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setMt5IsDemo(false)}
-                    className={`flex-1 py-2 rounded-xl text-[10px] font-bold transition ${
-                      !mt5IsDemo ? 'bg-white text-slate-900' : 'bg-[#27272a] text-neutral-400'
-                    }`}
-                  >
-                    Real
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <label className="text-[10px] font-semibold text-neutral-400 block mb-1">
-                MT5 Account ID
-              </label>
-              <input
-                type="text"
-                value={mt5Login}
-                onChange={(e) => setMt5Login(e.target.value)}
-                placeholder="e.g. 1029384"
-                className="w-full px-3 py-2 rounded-xl bg-[#27272a] border border-neutral-700 text-xs font-mono text-white focus:outline-none focus:border-white"
-              />
-            </div>
-
-            <div>
-              <label className="text-[10px] font-semibold text-neutral-400 block mb-1">
-                Trader Password
-              </label>
-              <div className="relative">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={mt5Password}
-                  onChange={(e) => setMt5Password(e.target.value)}
-                  placeholder="••••••••••••"
-                  className="w-full px-3 py-2 pr-9 rounded-xl bg-[#27272a] border border-neutral-700 text-xs font-mono text-white focus:outline-none focus:border-white"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-white"
-                >
-                  {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full mt-2 py-3 rounded-full bg-white hover:bg-neutral-100 active:scale-98 text-slate-900 font-extrabold text-xs shadow-md flex items-center justify-center gap-1.5 transition cursor-pointer"
-            >
-              {loading ? (
-                <div className="w-4 h-4 border-2 border-slate-900 border-t-transparent rounded-full animate-spin" />
-              ) : (
-                <>
-                  <span>Connect & Open Grid Inputs</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </>
-              )}
-            </button>
-          </form>
         )}
 
         {/* Direct Deriv API Token Inputs */}
@@ -322,7 +188,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
                   rel="noopener noreferrer"
                   className="text-[10px] text-sky-400 hover:underline"
                 >
-                  Get Token →
+                  Create Token on Deriv →
                 </a>
               </div>
               <div className="relative">
@@ -330,8 +196,9 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
                   type={showPassword ? 'text' : 'password'}
                   value={token}
                   onChange={(e) => setToken(e.target.value)}
-                  placeholder="e.g. uY82kLPq91bN..."
-                  className="w-full px-3 py-2 pr-9 rounded-xl bg-[#27272a] border border-neutral-700 text-xs font-mono text-white focus:outline-none"
+                  placeholder="Paste your token here..."
+                  disabled={loading || connectionSuccess}
+                  className="w-full px-3 py-2 pr-9 rounded-xl bg-[#27272a] border border-neutral-700 text-xs font-mono text-white focus:outline-none focus:border-neutral-500 disabled:opacity-50"
                 />
                 <button
                   type="button"
@@ -341,19 +208,55 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
                   {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                 </button>
               </div>
-              <p className="text-[10px] text-neutral-400 mt-1">Requires Read & Trade scopes</p>
+              <p className="text-[10px] text-neutral-400 mt-1">Requires Read & Trade permissions</p>
+
+              <div className="mt-3 pt-2.5 border-t border-neutral-800 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-neutral-400 font-semibold">Deriv App ID:</span>
+                  <div className="flex gap-1">
+                    {[
+                      { id: 16929, label: '16929' },
+                      { id: 36544, label: '36544' },
+                      { id: 62923, label: '62923' },
+                    ].map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        disabled={loading || connectionSuccess}
+                        onClick={() => setAppId(item.id)}
+                        className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold transition cursor-pointer ${
+                          appId === item.id
+                            ? 'bg-white text-slate-900 shadow-2xs'
+                            : 'bg-[#27272a] text-neutral-400 hover:text-white'
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <p className="text-[9px] text-neutral-500">
+                  Default <strong>16929</strong> (Standard Deriv Web Client).
+                </p>
+              </div>
             </div>
 
             <button
               type="submit"
-              disabled={loading}
-              className="w-full mt-2 py-3 rounded-full bg-white hover:bg-neutral-100 active:scale-98 text-slate-900 font-extrabold text-xs shadow-md flex items-center justify-center gap-1.5 transition cursor-pointer"
+              disabled={loading || connectionSuccess}
+              className={`w-full mt-2 py-3 rounded-full font-extrabold text-xs shadow-md flex items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-50 ${
+                connectionSuccess
+                  ? 'bg-emerald-500 text-white'
+                  : 'bg-white hover:bg-neutral-100 active:scale-98 text-slate-900'
+              }`}
             >
-              {loading ? (
+              {connectionSuccess ? (
+                <span>Connected! Launching Dashboard...</span>
+              ) : loading ? (
                 <div className="w-4 h-4 border-2 border-slate-900 border-t-transparent rounded-full animate-spin" />
               ) : (
                 <>
-                  <span>Connect & Open Grid Inputs</span>
+                  <span>Connect & Open Order Desk</span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </>
               )}
@@ -361,32 +264,116 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
           </form>
         )}
 
-        {/* Direct Demo Sandbox */}
-        {selectedMode === 'demo' && (
-          <div className="py-2 space-y-3 text-center">
-            <div className="p-3 rounded-2xl bg-[#27272a] text-center">
-              <div className="text-xl font-bold font-mono text-white">$10,000.00 USD</div>
-              <p className="text-[11px] text-neutral-400 mt-0.5">
-                Simulate Spot 4170 ladders risk-free with live ticks.
-              </p>
+        {/* Direct MT5 Inputs */}
+        {selectedMode === 'mt5' && (
+          <form onSubmit={handleSubmit} className="space-y-2.5">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] font-semibold text-neutral-400 block mb-1">
+                  Server
+                </label>
+                <select
+                  value={mt5Server}
+                  disabled={loading || connectionSuccess}
+                  onChange={(e) => {
+                    setMt5Server(e.target.value);
+                    setMt5IsDemo(e.target.value.toLowerCase().includes('demo'));
+                  }}
+                  className="w-full px-3 py-2 rounded-xl bg-[#27272a] border border-neutral-700 text-xs text-white focus:outline-none disabled:opacity-50"
+                >
+                  <option value="Deriv-Server">Deriv-Server (Real)</option>
+                  <option value="Deriv-SVG">Deriv-SVG (Real)</option>
+                  <option value="Deriv-Demo">Deriv-Demo</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-semibold text-neutral-400 block mb-1">
+                  Account Type
+                </label>
+                <div className="flex gap-1">
+                  <button
+                    type="button"
+                    disabled={loading || connectionSuccess}
+                    onClick={() => setMt5IsDemo(false)}
+                    className={`flex-1 py-2 rounded-xl text-[10px] font-bold transition ${
+                      !mt5IsDemo ? 'bg-white text-slate-900' : 'bg-[#27272a] text-neutral-400'
+                    }`}
+                  >
+                    Real
+                  </button>
+                  <button
+                    type="button"
+                    disabled={loading || connectionSuccess}
+                    onClick={() => setMt5IsDemo(true)}
+                    className={`flex-1 py-2 rounded-xl text-[10px] font-bold transition ${
+                      mt5IsDemo ? 'bg-white text-slate-900' : 'bg-[#27272a] text-neutral-400'
+                    }`}
+                  >
+                    Demo
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[10px] font-semibold text-neutral-400 block mb-1">
+                MT5 Account ID
+              </label>
+              <input
+                type="text"
+                value={mt5Login}
+                disabled={loading || connectionSuccess}
+                onChange={(e) => setMt5Login(e.target.value)}
+                placeholder="e.g. 1029384"
+                className="w-full px-3 py-2 rounded-xl bg-[#27272a] border border-neutral-700 text-xs font-mono text-white focus:outline-none focus:border-neutral-500 disabled:opacity-50"
+              />
+            </div>
+
+            <div>
+              <label className="text-[10px] font-semibold text-neutral-400 block mb-1">
+                Trader Password
+              </label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={mt5Password}
+                  disabled={loading || connectionSuccess}
+                  onChange={(e) => setMt5Password(e.target.value)}
+                  placeholder="••••••••••••"
+                  className="w-full px-3 py-2 pr-9 rounded-xl bg-[#27272a] border border-neutral-700 text-xs font-mono text-white focus:outline-none focus:border-neutral-500 disabled:opacity-50"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-white"
+                >
+                  {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
+              </div>
             </div>
 
             <button
-              type="button"
-              onClick={handleLaunchDemo}
-              disabled={loading}
-              className="w-full py-3 rounded-full bg-white hover:bg-neutral-100 active:scale-98 text-slate-900 font-extrabold text-xs shadow-md flex items-center justify-center gap-1.5 transition cursor-pointer"
+              type="submit"
+              disabled={loading || connectionSuccess}
+              className={`w-full mt-2 py-3 rounded-full font-extrabold text-xs shadow-md flex items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-50 ${
+                connectionSuccess
+                  ? 'bg-emerald-500 text-white'
+                  : 'bg-white hover:bg-neutral-100 active:scale-98 text-slate-900'
+              }`}
             >
-              {loading ? (
+              {connectionSuccess ? (
+                <span>Connected! Launching Dashboard...</span>
+              ) : loading ? (
                 <div className="w-4 h-4 border-2 border-slate-900 border-t-transparent rounded-full animate-spin" />
               ) : (
                 <>
-                  <span>Start with $10,000 Demo</span>
+                  <span>Connect & Open Order Desk</span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </>
               )}
             </button>
-          </div>
+          </form>
         )}
       </div>
     </div>

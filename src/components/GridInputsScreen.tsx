@@ -14,8 +14,13 @@ import {
   ChevronDown,
   ChevronUp,
   Sparkles,
-  Info,
+  Zap,
+  Layers,
+  Minus,
+  Plus,
+  Loader2,
 } from 'lucide-react';
+import { derivService } from '../services/derivWs';
 
 interface GridInputsScreenProps {
   account: DerivAccount;
@@ -36,28 +41,31 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
   symbols,
   onDeployOrders,
 }) => {
-  // Preset trading action: SELL STOP (default for 4170 -> 4165 down), SELL LIMIT, BUY LIMIT, BUY STOP
+  // Preset trading action
   const [tradeAction, setTradeAction] = useState<EasyPresetType>('SELL_STOP');
 
   // Simple, intuitive trading fields
   const [startPrice, setStartPrice] = useState<number>(4165.0);
   const [stepSpacing, setStepSpacing] = useState<number>(0.1);
-  const [orderCount, setOrderCount] = useState<number>(10);
+  const [orderCount, setOrderCount] = useState<number>(5);
   const [lotSize, setLotSize] = useState<number>(0.1);
   const [stepDirection, setStepDirection] = useState<'down' | 'up'>('down');
   const [ordersPerLevel, setOrdersPerLevel] = useState<number>(1);
   const [showFormulaDetails, setShowFormulaDetails] = useState(false);
 
+  // Execution Mode: 'immediate' (execute all into market immediately via API) or 'ladder' (trigger on price reach)
+  const [executionMode, setExecutionMode] = useState<'immediate' | 'ladder'>('immediate');
+  const [isDeploying, setIsDeploying] = useState(false);
+  const [deployFeedback, setDeployFeedback] = useState<string | null>(null);
+
   // Auto-align default start price when market spot updates or action changes
   useEffect(() => {
     if (spotPrice > 0) {
       if (tradeAction === 'SELL_STOP' || tradeAction === 'BUY_LIMIT') {
-        // Below spot
         const initial = +(spotPrice - 5.0).toFixed(selectedSymbol.decimals);
         setStartPrice(initial > 0 ? initial : +(spotPrice * 0.99).toFixed(selectedSymbol.decimals));
         setStepDirection('down');
       } else {
-        // Above spot
         const initial = +(spotPrice + 5.0).toFixed(selectedSymbol.decimals);
         setStartPrice(initial);
         setStepDirection('up');
@@ -73,7 +81,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
   const ladderLevels: LadderLevel[] = useMemo(() => {
     const list: LadderLevel[] = [];
     let cumLots = 0;
-    const safeCount = Math.min(30, Math.max(1, orderCount));
+    const safeCount = Math.min(25, Math.max(1, orderCount));
 
     for (let k = 0; k < safeCount; k++) {
       const priceOffset = k * stepSpacing;
@@ -117,41 +125,83 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
   const totalVolume = +(totalOrders * lotSize).toFixed(2);
   const endPrice = ladderLevels[ladderLevels.length - 1]?.price || startPrice;
 
-  const handleDeploy = () => {
-    const newOrders: PlacedOrder[] = [];
-    ladderLevels.forEach((level) => {
-      for (let s = 1; s <= level.ordersCount; s++) {
-        newOrders.push({
-          id: `ORD-${Date.now().toString(36).toUpperCase()}-${level.levelIndex + 1}-${s}`,
-          levelIndex: level.levelIndex + 1,
-          subIndex: s,
-          symbol: selectedSymbol.symbol,
-          direction,
-          orderType,
-          price: level.price,
-          lotSize: level.lotSize,
-          status: 'PENDING',
-          createdAt: Date.now(),
-        });
-      }
+  // Stepper handlers for lot size to avoid needing keyboard
+  const changeLot = (delta: number) => {
+    setLotSize((prev) => {
+      const next = +(prev + delta).toFixed(2);
+      return next >= 0.01 ? next : 0.01;
     });
+  };
 
+  const handleDeploy = async () => {
+    setIsDeploying(true);
+    setDeployFeedback('Sending real trade orders to Deriv API...');
+
+    const newOrders: PlacedOrder[] = [];
+
+    for (const level of ladderLevels) {
+      for (let s = 1; s <= level.ordersCount; s++) {
+        const orderId = `ORD-${Date.now().toString(36).toUpperCase()}-${level.levelIndex + 1}-${s}`;
+
+        if (executionMode === 'immediate') {
+          // Send real trade to Deriv WebSocket!
+          const res = await derivService.executeRealTrade({
+            symbol: selectedSymbol.symbol,
+            direction,
+            price: level.price,
+            lotSize: level.lotSize,
+            orderType: 'MARKET_GRID',
+          });
+
+          newOrders.push({
+            id: orderId,
+            levelIndex: level.levelIndex + 1,
+            subIndex: s,
+            symbol: selectedSymbol.symbol,
+            direction,
+            orderType: 'MARKET_GRID',
+            price: level.price,
+            lotSize: level.lotSize,
+            status: 'FILLED', // Directly filled into the market! No manual button clicking!
+            createdAt: Date.now(),
+            filledAt: Date.now(),
+            derivContractId: res.contractId,
+          });
+        } else {
+          // Ladder order (triggers automatically when market price touches it)
+          newOrders.push({
+            id: orderId,
+            levelIndex: level.levelIndex + 1,
+            subIndex: s,
+            symbol: selectedSymbol.symbol,
+            direction,
+            orderType,
+            price: level.price,
+            lotSize: level.lotSize,
+            status: 'PENDING',
+            createdAt: Date.now(),
+          });
+        }
+      }
+    }
+
+    setIsDeploying(false);
     onDeployOrders(newOrders);
   };
 
   return (
-    <div className="pb-32 pt-3 px-5 max-w-md mx-auto space-y-4 font-sans select-none bg-white min-h-screen">
+    <div className="pb-44 pt-3 px-4 sm:px-5 max-w-md mx-auto space-y-4 font-sans bg-white min-h-screen">
       {/* Top Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-black text-slate-900 tracking-tight">Place Grid Orders</h2>
+          <h2 className="text-2xl font-black text-slate-900 tracking-tight">Order Desk</h2>
           <p className="text-xs text-slate-400 font-medium">
-            {account.mt5Server ? `Connected to ${account.mt5Server}` : 'Demo Trading Desk'}
+            {account.token ? 'Live Deriv API Active' : account.mt5Server ? `MT5 (${account.mt5Login})` : 'Sandbox Simulator'}
           </p>
         </div>
 
         {/* Live Spot Pill */}
-        <div className="px-3 py-1.5 rounded-full bg-[#f4f5f7] text-slate-800 text-xs font-mono font-bold flex items-center gap-1.5">
+        <div className="px-3 py-1.5 rounded-full bg-[#f4f5f7] text-slate-800 text-xs font-mono font-bold flex items-center gap-1.5 shrink-0">
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
           <span>Spot: {spotPrice.toFixed(selectedSymbol.decimals)}</span>
         </div>
@@ -164,6 +214,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
           return (
             <button
               key={sym.symbol}
+              type="button"
               onClick={() => onSelectSymbol(sym)}
               className={`px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition cursor-pointer ${
                 isSelected
@@ -177,12 +228,41 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
         })}
       </div>
 
+      {/* Execution Style Switcher: Immediate Market vs Ladder Triggers */}
+      <div className="bg-[#f4f5f7] p-1 rounded-2xl flex gap-1 text-xs font-bold">
+        <button
+          type="button"
+          onClick={() => setExecutionMode('immediate')}
+          className={`flex-1 py-2 rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 ${
+            executionMode === 'immediate'
+              ? 'bg-[#18181b] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Zap className="w-3.5 h-3.5 text-amber-400" />
+          <span>Execute All Now (Live API)</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setExecutionMode('ladder')}
+          className={`flex-1 py-2 rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 ${
+            executionMode === 'ladder'
+              ? 'bg-[#18181b] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Layers className="w-3.5 h-3.5 text-sky-400" />
+          <span>Auto Price Trigger</span>
+        </button>
+      </div>
+
       {/* 4 Simple Trading Actions: Sell Stop, Buy Limit, Sell Limit, Buy Stop */}
       <div className="bg-[#f4f5f7] rounded-2xl p-1 grid grid-cols-2 gap-1 text-xs font-bold">
         <button
           type="button"
           onClick={() => setTradeAction('SELL_STOP')}
-          className={`py-2 px-3 rounded-xl transition cursor-pointer flex flex-col items-center ${
+          className={`py-2 px-2.5 rounded-xl transition cursor-pointer flex flex-col items-center ${
             tradeAction === 'SELL_STOP'
               ? 'bg-[#18181b] text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900'
@@ -198,7 +278,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
         <button
           type="button"
           onClick={() => setTradeAction('BUY_LIMIT')}
-          className={`py-2 px-3 rounded-xl transition cursor-pointer flex flex-col items-center ${
+          className={`py-2 px-2.5 rounded-xl transition cursor-pointer flex flex-col items-center ${
             tradeAction === 'BUY_LIMIT'
               ? 'bg-[#18181b] text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900'
@@ -214,7 +294,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
         <button
           type="button"
           onClick={() => setTradeAction('SELL_LIMIT')}
-          className={`py-2 px-3 rounded-xl transition cursor-pointer flex flex-col items-center ${
+          className={`py-2 px-2.5 rounded-xl transition cursor-pointer flex flex-col items-center ${
             tradeAction === 'SELL_LIMIT'
               ? 'bg-[#18181b] text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900'
@@ -230,7 +310,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
         <button
           type="button"
           onClick={() => setTradeAction('BUY_STOP')}
-          className={`py-2 px-3 rounded-xl transition cursor-pointer flex flex-col items-center ${
+          className={`py-2 px-2.5 rounded-xl transition cursor-pointer flex flex-col items-center ${
             tradeAction === 'BUY_STOP'
               ? 'bg-[#18181b] text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900'
@@ -245,30 +325,26 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
       </div>
 
       {/* Main Order Settings Card */}
-      <div className="bg-white rounded-[28px] p-4 sm:p-5 border border-slate-100 shadow-[0_4px_20px_rgba(0,0,0,0.02)] space-y-3.5">
+      <div className="bg-white rounded-[28px] p-4 sm:p-5 border border-slate-100 shadow-[0_4px_20px_rgba(0,0,0,0.02)] space-y-4">
         {/* Field 1: Start Price */}
         <div>
           <div className="flex items-center justify-between text-xs mb-1">
-            <label className="font-bold text-slate-900">
-              First Order Price
-            </label>
+            <label className="font-bold text-slate-900">First Order Price</label>
             <span className="text-[11px] font-mono font-medium text-slate-400">
               Spot: {spotPrice.toFixed(selectedSymbol.decimals)}
             </span>
           </div>
 
-          <div className="relative">
-            <input
-              type="number"
-              step="any"
-              value={startPrice}
-              onChange={(e) => setStartPrice(parseFloat(e.target.value) || 0)}
-              className="w-full px-4 py-2.5 rounded-2xl bg-[#f4f5f7] border-0 font-mono text-base font-bold text-slate-900 focus:ring-2 focus:ring-slate-900"
-            />
-          </div>
+          <input
+            type="number"
+            step="any"
+            inputMode="decimal"
+            value={startPrice}
+            onChange={(e) => setStartPrice(parseFloat(e.target.value) || 0)}
+            className="w-full px-4 py-2.5 rounded-2xl bg-[#f4f5f7] border-0 font-mono text-base font-bold text-slate-900 focus:ring-2 focus:ring-slate-900"
+          />
 
-          {/* Quick presets for starting price relative to spot */}
-          <div className="flex gap-1.5 mt-1.5">
+          <div className="grid grid-cols-6 gap-1 mt-1.5">
             {[-5.0, -2.0, -1.0, 1.0, 2.0, 5.0].map((diff) => {
               const p = +(spotPrice + diff).toFixed(selectedSymbol.decimals);
               return (
@@ -276,7 +352,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
                   key={diff}
                   type="button"
                   onClick={() => setStartPrice(p)}
-                  className="flex-1 py-1 rounded-lg bg-[#f4f5f7] hover:bg-slate-200 text-[10px] font-mono font-semibold text-slate-700 cursor-pointer transition"
+                  className="py-1 rounded-lg bg-[#f4f5f7] hover:bg-slate-200 text-[10px] font-mono font-semibold text-slate-700 cursor-pointer transition text-center"
                 >
                   {diff > 0 ? `+${diff}` : diff}
                 </button>
@@ -285,12 +361,67 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
           </div>
         </div>
 
-        {/* Field 2 & 3: Spacing & How Many Orders */}
+        {/* Field 2: Responsive Lot Volume Selector (Fixed mobile freezing & layout) */}
+        <div>
+          <div className="flex items-center justify-between text-xs mb-1">
+            <label className="font-bold text-slate-900">Lot Size (Volume per Order)</label>
+            <span className="text-[10px] text-slate-400 font-medium">Deriv Stake</span>
+          </div>
+
+          {/* Stepper + Input */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => changeLot(-0.01)}
+              className="w-10 h-10 rounded-xl bg-[#f4f5f7] hover:bg-slate-200 active:scale-95 text-slate-800 flex items-center justify-center font-bold cursor-pointer transition shrink-0"
+              title="Decrease lot"
+            >
+              <Minus className="w-4 h-4" />
+            </button>
+
+            <input
+              type="number"
+              step="0.01"
+              min="0.01"
+              inputMode="decimal"
+              value={lotSize}
+              onChange={(e) => setLotSize(Math.max(0.01, parseFloat(e.target.value) || 0.01))}
+              className="flex-1 min-w-0 px-3 py-2.5 rounded-xl bg-[#f4f5f7] border-0 font-mono text-base font-bold text-slate-900 text-center focus:ring-2 focus:ring-slate-900"
+            />
+
+            <button
+              type="button"
+              onClick={() => changeLot(0.01)}
+              className="w-10 h-10 rounded-xl bg-[#f4f5f7] hover:bg-slate-200 active:scale-95 text-slate-800 flex items-center justify-center font-bold cursor-pointer transition shrink-0"
+              title="Increase lot"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Quick Preset Pills */}
+          <div className="grid grid-cols-5 gap-1 mt-1.5">
+            {[0.01, 0.05, 0.10, 0.20, 0.50].map((l) => (
+              <button
+                key={l}
+                type="button"
+                onClick={() => setLotSize(l)}
+                className={`py-1 rounded-lg text-[10px] font-bold transition cursor-pointer text-center ${
+                  lotSize === l ? 'bg-[#18181b] text-white shadow-2xs' : 'bg-[#f4f5f7] text-slate-600'
+                }`}
+              >
+                {l}L
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Field 3 & 4: Spacing & How Many Orders */}
         <div className="grid grid-cols-2 gap-3 pt-1">
           {/* Spacing / Step */}
           <div>
             <div className="flex items-center justify-between text-xs mb-1">
-              <label className="font-bold text-slate-900">Spacing (Step)</label>
+              <label className="font-bold text-slate-900">Spacing</label>
               {/* Compact Progression Toggle */}
               <div className="flex bg-[#f4f5f7] rounded-md p-0.5">
                 <button
@@ -299,7 +430,6 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
                   className={`px-1.5 py-0.5 rounded text-[9px] font-bold cursor-pointer transition ${
                     stepDirection === 'down' ? 'bg-[#18181b] text-white' : 'text-slate-500'
                   }`}
-                  title="Subtract spacing each step"
                 >
                   ↓ Down
                 </button>
@@ -309,7 +439,6 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
                   className={`px-1.5 py-0.5 rounded text-[9px] font-bold cursor-pointer transition ${
                     stepDirection === 'up' ? 'bg-[#18181b] text-white' : 'text-slate-500'
                   }`}
-                  title="Add spacing each step"
                 >
                   ↑ Up
                 </button>
@@ -319,18 +448,19 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
             <input
               type="number"
               step="any"
+              inputMode="decimal"
               value={stepSpacing}
               onChange={(e) => setStepSpacing(Math.max(0.001, parseFloat(e.target.value) || 0.1))}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-[#f4f5f7] border-0 font-mono text-sm font-bold text-slate-900 focus:ring-2 focus:ring-slate-900"
+              className="w-full px-3 py-2 rounded-xl bg-[#f4f5f7] border-0 font-mono text-sm font-bold text-slate-900 focus:ring-2 focus:ring-slate-900"
             />
 
-            <div className="flex gap-1 mt-1.5">
+            <div className="grid grid-cols-4 gap-1 mt-1.5">
               {[0.1, 0.25, 0.5, 1.0].map((s) => (
                 <button
                   key={s}
                   type="button"
                   onClick={() => setStepSpacing(s)}
-                  className={`flex-1 py-1 rounded-md text-[9px] font-bold transition cursor-pointer ${
+                  className={`py-1 rounded-md text-[9px] font-bold transition cursor-pointer text-center ${
                     stepSpacing === s ? 'bg-[#18181b] text-white' : 'bg-[#f4f5f7] text-slate-600'
                   }`}
                 >
@@ -343,63 +473,31 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
           {/* How Many Orders */}
           <div>
             <div className="flex items-center justify-between text-xs mb-1">
-              <label className="font-bold text-slate-900">How Many Orders</label>
+              <label className="font-bold text-slate-900">Orders</label>
               <span className="text-[10px] text-slate-400 font-medium">Count</span>
             </div>
 
             <input
               type="number"
               min="1"
-              max="30"
+              max="25"
+              inputMode="numeric"
               value={orderCount}
               onChange={(e) => setOrderCount(Math.max(1, parseInt(e.target.value, 10) || 1))}
-              className="w-full px-3.5 py-2.5 rounded-xl bg-[#f4f5f7] border-0 font-mono text-sm font-bold text-slate-900 focus:ring-2 focus:ring-slate-900"
+              className="w-full px-3 py-2 rounded-xl bg-[#f4f5f7] border-0 font-mono text-sm font-bold text-slate-900 focus:ring-2 focus:ring-slate-900"
             />
 
-            <div className="flex gap-1 mt-1.5">
-              {[3, 5, 10, 20].map((cnt) => (
+            <div className="grid grid-cols-4 gap-1 mt-1.5">
+              {[3, 5, 10, 15].map((cnt) => (
                 <button
                   key={cnt}
                   type="button"
                   onClick={() => setOrderCount(cnt)}
-                  className={`flex-1 py-1 rounded-md text-[9px] font-bold transition cursor-pointer ${
+                  className={`py-1 rounded-md text-[9px] font-bold transition cursor-pointer text-center ${
                     orderCount === cnt ? 'bg-[#18181b] text-white' : 'bg-[#f4f5f7] text-slate-600'
                   }`}
                 >
                   {cnt}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Field 4: Lot Size */}
-        <div className="pt-1">
-          <div className="flex items-center justify-between text-xs mb-1">
-            <label className="font-bold text-slate-900">Lot Size per Order</label>
-            <span className="text-[10px] text-slate-400 font-medium">Volume</span>
-          </div>
-
-          <div className="flex gap-2">
-            <input
-              type="number"
-              step="any"
-              value={lotSize}
-              onChange={(e) => setLotSize(Math.max(0.001, parseFloat(e.target.value) || 0.01))}
-              className="flex-1 px-3.5 py-2.5 rounded-xl bg-[#f4f5f7] border-0 font-mono text-sm font-bold text-slate-900 focus:ring-2 focus:ring-slate-900"
-            />
-
-            <div className="flex gap-1 items-center">
-              {[0.01, 0.05, 0.1, 0.5].map((l) => (
-                <button
-                  key={l}
-                  type="button"
-                  onClick={() => setLotSize(l)}
-                  className={`px-2.5 py-2 rounded-xl text-[10px] font-bold transition cursor-pointer ${
-                    lotSize === l ? 'bg-[#18181b] text-white' : 'bg-[#f4f5f7] text-slate-600'
-                  }`}
-                >
-                  {l}
                 </button>
               ))}
             </div>
@@ -412,35 +510,49 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
         <div>
           <div className="flex items-center gap-1.5 text-[10px] font-bold text-neutral-400 uppercase tracking-wider">
             <Sparkles className="w-3 h-3 text-[#fbcfe8]" />
-            <span>Ready to Place to Account</span>
+            <span>
+              {executionMode === 'immediate'
+                ? 'Ready for Live API Execution'
+                : 'Ready for Trigger Ladder'}
+            </span>
           </div>
 
-          {/* Clear plain summary */}
           <div className="text-sm font-bold mt-1 text-neutral-100 leading-snug">
-            Placing {totalOrders} {direction} {orderType} orders of {lotSize} lots from{' '}
+            Placing {totalOrders} {direction} {executionMode === 'immediate' ? 'Market' : orderType} orders of {lotSize} lots from{' '}
             <span className="text-white font-mono">{startPrice.toFixed(selectedSymbol.decimals)}</span>{' '}
             {stepDirection === 'down' ? 'down' : 'up'} to{' '}
             <span className="text-white font-mono">{endPrice.toFixed(selectedSymbol.decimals)}</span>
           </div>
 
           <div className="text-[11px] text-neutral-400 font-mono mt-1">
-            Total volume: {totalVolume} Lots • Step spacing: {stepSpacing}
+            Total volume: {totalVolume} Lots • {executionMode === 'immediate' ? 'Fills instantly into market' : 'Triggers as price hits level'}
           </div>
         </div>
 
         <button
+          type="button"
+          disabled={isDeploying}
           onClick={handleDeploy}
-          className="w-full py-3.5 rounded-full bg-white hover:bg-neutral-100 active:scale-98 text-slate-900 font-black text-sm shadow-md flex items-center justify-center gap-2 transition cursor-pointer"
+          className="w-full py-3.5 rounded-full bg-white hover:bg-neutral-100 active:scale-98 text-slate-900 font-black text-sm shadow-md flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50"
         >
-          <span>Place {totalOrders} Orders to Account</span>
-          <ArrowRight className="w-4 h-4" />
+          {isDeploying ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>Placing to Deriv API...</span>
+            </>
+          ) : (
+            <>
+              <span>Place {totalOrders} Orders to Account</span>
+              <ArrowRight className="w-4 h-4" />
+            </>
+          )}
         </button>
       </div>
 
-      {/* Order Ladder Preview (Shows the exact prices placed) */}
+      {/* Order Ladder Preview */}
       <div className="bg-white rounded-[28px] p-4 border border-slate-100 shadow-[0_4px_20px_rgba(0,0,0,0.02)] space-y-2">
         <div className="flex items-center justify-between text-xs pb-1.5 border-b border-slate-100">
-          <span className="font-extrabold text-slate-900">Calculated Order Levels</span>
+          <span className="font-extrabold text-slate-900">Planned Positions</span>
           <button
             type="button"
             onClick={() => setShowFormulaDetails(!showFormulaDetails)}
@@ -451,7 +563,6 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
           </button>
         </div>
 
-        {/* Formula breakdown when toggled */}
         {showFormulaDetails && (
           <div className="p-2.5 rounded-xl bg-[#f4f5f7] text-[10px] font-mono text-slate-600 space-y-1">
             <div>u = Spot ({spotPrice})</div>
@@ -462,7 +573,6 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
           </div>
         )}
 
-        {/* Clean order list */}
         <div className="divide-y divide-slate-100 max-h-44 overflow-y-auto font-mono text-xs">
           {ladderLevels.map((lvl) => (
             <div key={lvl.levelIndex} className="py-2 flex items-center justify-between">
@@ -481,7 +591,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
                     direction === 'SELL' ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'
                   }`}
                 >
-                  {direction} {orderType}
+                  {direction}
                 </span>
                 <span className="text-[10px] text-slate-400">{lvl.lotSize}L</span>
               </div>

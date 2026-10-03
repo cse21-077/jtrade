@@ -1,14 +1,21 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { PlacedOrder } from '../types/trading';
-import { Trash2, Download, Clock, CheckCircle2 } from 'lucide-react';
+import {
+  Download,
+  Trash2,
+  XCircle,
+  Loader2,
+  AlertCircle,
+  ExternalLink,
+} from 'lucide-react';
 
 interface OrdersScreenProps {
   orders: PlacedOrder[];
   spotPrice: number;
   onCancelOrder: (id: string) => void;
   onCancelAll: () => void;
-  onSimulateFill: (id: string) => void;
-  onFillAllPending: () => void;
+  onClosePosition: (id: string) => void;
+  onBulkCloseAll: () => Promise<void>;
   onSwitchToGrid: () => void;
 }
 
@@ -17,24 +24,65 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
   spotPrice,
   onCancelOrder,
   onCancelAll,
-  onSimulateFill,
-  onFillAllPending,
+  onClosePosition,
+  onBulkCloseAll,
   onSwitchToGrid,
 }) => {
+  const [filter, setFilter] = useState<'all' | 'filled' | 'pending'>('all');
+  const [isBulkClosing, setIsBulkClosing] = useState(false);
+  const [closingId, setClosingId] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
   const pending = orders.filter((o) => o.status === 'PENDING');
   const filled = orders.filter((o) => o.status === 'FILLED' || o.status === 'TRIGGERED');
 
+  // Calculate live floating P&L
   const totalPnL = filled.reduce((acc, order) => {
     const diff =
       order.direction === 'SELL' ? order.price - spotPrice : spotPrice - order.price;
-    return acc + diff * order.lotSize * 100;
+    return acc + diff * order.lotSize * 10;
   }, 0);
+
+  const filteredOrders = orders.filter((o) => {
+    if (filter === 'filled') return o.status === 'FILLED' || o.status === 'TRIGGERED';
+    if (filter === 'pending') return o.status === 'PENDING';
+    return true;
+  });
+
+  const handleBulkClose = async () => {
+    setErrorMessage(null);
+    setIsBulkClosing(true);
+    setFeedback('Liquidating positions on Deriv liquidity pool...');
+    try {
+      await onBulkCloseAll();
+      setFeedback('All positions successfully closed!');
+      setTimeout(() => setFeedback(null), 3500);
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Error executing bulk close on Deriv');
+    } finally {
+      setIsBulkClosing(false);
+    }
+  };
+
+  const handleSingleClose = async (id: string) => {
+    setErrorMessage(null);
+    setClosingId(id);
+    try {
+      await onClosePosition(id);
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Failed to close position on Deriv');
+    } finally {
+      setClosingId(null);
+    }
+  };
 
   const exportCSV = () => {
     if (orders.length === 0) return;
-    const headers = ['ID', 'Level', 'Direction', 'Price', 'Lot', 'Status', 'Spot'];
+    const headers = ['ID', 'ContractID', 'Level', 'Direction', 'Price', 'Lot', 'Status', 'Spot'];
     const rows = orders.map((o) => [
       o.id,
+      o.derivContractId || 'N/A',
       `Level ${o.levelIndex}`,
       o.direction,
       o.price.toFixed(2),
@@ -48,155 +96,248 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
       [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
     const link = document.createElement('a');
     link.href = encodeURI(csvContent);
-    link.download = `orders-${Date.now()}.csv`;
+    link.download = `deriv-orders-${Date.now()}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
   return (
-    <div className="pb-28 pt-3 px-5 max-w-[400px] mx-auto space-y-5 font-sans select-none bg-white min-h-screen">
+    <div className="pb-40 pt-3 px-4 sm:px-5 max-w-md w-full mx-auto space-y-4 font-sans bg-white min-h-screen">
       {/* Top Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between pt-1">
         <div>
-          <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Orders Desk</h2>
-          <p className="text-xs text-slate-400 font-medium mt-0.5">
-            Spot Price: <strong className="font-mono text-slate-800">{spotPrice.toFixed(2)}</strong>
+          <h2 className="text-xl font-black text-slate-900 tracking-tight">Active Market Positions</h2>
+          <p className="text-xs text-slate-400 font-mono mt-0.5">
+            Live Deriv Spot: <strong className="text-slate-900">{spotPrice.toFixed(2)}</strong>
           </p>
         </div>
 
-        {/* Action icons */}
-        <div className="flex items-center gap-1.5">
-          {pending.length > 0 && (
+        {orders.length > 0 && (
+          <div className="flex items-center gap-1">
             <button
-              onClick={onFillAllPending}
-              className="px-3 py-1 rounded-full text-xs font-semibold bg-[#f4f5f7] text-slate-800 hover:bg-slate-200 transition cursor-pointer"
+              type="button"
+              onClick={exportCSV}
+              className="p-2 text-slate-500 hover:text-slate-900 transition cursor-pointer"
+              title="Export CSV"
             >
-              Fill All
+              <Download className="w-4 h-4" />
             </button>
-          )}
-
-          {orders.length > 0 && (
-            <>
-              <button
-                onClick={exportCSV}
-                className="p-2 rounded-full text-slate-600 hover:bg-slate-100 transition cursor-pointer"
-                title="Download CSV"
-              >
-                <Download className="w-4 h-4" />
-              </button>
-              <button
-                onClick={onCancelAll}
-                className="p-2 rounded-full text-slate-400 hover:text-rose-600 transition cursor-pointer"
-                title="Cancel All"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* P&L Card: High-contrast Dark Card */}
-      <div className="bg-[#18181b] text-white rounded-[28px] p-5 shadow-sm flex items-center justify-between">
-        <div>
-          <span className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider block">
-            Grid Unrealized P&L
-          </span>
-          <div
-            className={`text-2xl font-bold font-mono mt-0.5 ${
-              totalPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'
-            }`}
-          >
-            {totalPnL >= 0 ? '+' : ''}${totalPnL.toFixed(2)} USD
+            <button
+              type="button"
+              onClick={onCancelAll}
+              className="p-2 text-slate-400 hover:text-rose-600 transition cursor-pointer"
+              title="Cancel Pending"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
           </div>
-          <span className="text-[11px] text-neutral-400">
-            {filled.length} filled / {pending.length} pending
-          </span>
-        </div>
-
-        <div className="flex flex-col gap-1 items-end">
-          <span className="px-3 py-1 rounded-full bg-neutral-800 text-xs font-medium text-neutral-300">
-            {orders.length} Total
-          </span>
-        </div>
+        )}
       </div>
 
-      {/* Orders List */}
-      {orders.length === 0 ? (
-        <div className="bg-white rounded-[28px] p-8 border border-slate-100 shadow-[0_4px_20px_rgba(0,0,0,0.02)] text-center">
-          <Clock className="w-8 h-8 mx-auto text-slate-300 mb-2" />
-          <h3 className="text-sm font-bold text-slate-800">No active grid orders</h3>
-          <p className="text-xs text-slate-400 mt-1 mb-4">
-            Deploy positions from the Grid tab.
+      {/* Error / Alert Banner */}
+      {errorMessage && (
+        <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
+          <div className="flex-1">
+            <div className="font-bold">Deriv Notice</div>
+            <div className="mt-0.5">{errorMessage}</div>
+          </div>
+        </div>
+      )}
+
+      {/* High-Contrast P&L Terminal Card with Instant Bulk Close */}
+      <div className="bg-[#18181b] text-white rounded-2xl p-5 shadow-sm space-y-4 border border-neutral-800">
+        <div className="flex items-start justify-between">
+          <div>
+            <span className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider block">
+              Floating Unrealized P&L
+            </span>
+            <div
+              className={`text-3xl font-black font-mono mt-1 tracking-tight ${
+                totalPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'
+              }`}
+            >
+              {totalPnL >= 0 ? '+' : ''}${totalPnL.toFixed(2)} <span className="text-xs text-neutral-400">USD</span>
+            </div>
+            <p className="text-xs text-neutral-400 mt-1 font-mono">
+              {filled.length} open contracts • {pending.length} pending ladder
+            </p>
+          </div>
+
+          <div className="text-right">
+            <span className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider block">
+              Total Count
+            </span>
+            <span className="text-xl font-bold font-mono text-white mt-1 block">
+              {orders.length}
+            </span>
+          </div>
+        </div>
+
+        {/* 1-TAP BULK CLOSE BUTTON */}
+        {orders.length > 0 && (
+          <button
+            type="button"
+            disabled={isBulkClosing}
+            onClick={handleBulkClose}
+            className="w-full py-3.5 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-98 text-white font-black text-xs shadow-md flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50"
+          >
+            {isBulkClosing ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Liquidating {orders.length} Positions...</span>
+              </>
+            ) : (
+              <>
+                <XCircle className="w-4 h-4" />
+                <span>BULK CLOSE ALL ({orders.length} POSITIONS & ORDERS)</span>
+              </>
+            )}
+          </button>
+        )}
+
+        {feedback && (
+          <div className="text-center text-xs text-emerald-400 font-bold bg-neutral-900 py-2 px-3 rounded-lg border border-neutral-700">
+            {feedback}
+          </div>
+        )}
+      </div>
+
+      {/* Filter Tabs (Clean Line Tabs, Zero Puffy Pills) */}
+      <div className="flex border-b border-slate-200 text-xs font-bold">
+        <button
+          type="button"
+          onClick={() => setFilter('all')}
+          className={`pb-2.5 px-3 transition border-b-2 cursor-pointer ${
+            filter === 'all'
+              ? 'border-slate-900 text-slate-900'
+              : 'border-transparent text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          All ({orders.length})
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setFilter('filled')}
+          className={`pb-2.5 px-3 transition border-b-2 cursor-pointer ${
+            filter === 'filled'
+              ? 'border-slate-900 text-slate-900'
+              : 'border-transparent text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          Active Contracts ({filled.length})
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setFilter('pending')}
+          className={`pb-2.5 px-3 transition border-b-2 cursor-pointer ${
+            filter === 'pending'
+              ? 'border-slate-900 text-slate-900'
+              : 'border-transparent text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          Pending Ladder ({pending.length})
+        </button>
+      </div>
+
+      {/* Order Cards List (Clean Modern Structural Cards, No Weird Pills) */}
+      {filteredOrders.length === 0 ? (
+        <div className="py-12 text-center space-y-3">
+          <p className="text-sm font-bold text-slate-900">No active positions</p>
+          <p className="text-xs text-slate-400 max-w-xs mx-auto">
+            Switch to the Order Desk to execute positions directly into the Deriv market.
           </p>
           <button
+            type="button"
             onClick={onSwitchToGrid}
-            className="px-6 py-2.5 rounded-full bg-[#18181b] text-white font-bold text-xs shadow-sm transition cursor-pointer hover:bg-black"
+            className="px-5 py-2.5 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-black transition cursor-pointer"
           >
-            Open Grid Inputs
+            Open Order Desk
           </button>
         </div>
       ) : (
-        <div className="space-y-2.5">
-          {orders.map((order) => {
-            const isSell = order.direction === 'SELL';
+        <div className="space-y-3">
+          {filteredOrders.map((order) => {
             const isFilled = order.status === 'FILLED' || order.status === 'TRIGGERED';
-            const dist = +(spotPrice - order.price).toFixed(2);
+            const orderPnL = isFilled
+              ? (order.direction === 'SELL' ? order.price - spotPrice : spotPrice - order.price) *
+                order.lotSize *
+                10
+              : 0;
+
+            const isClosing = closingId === order.id;
 
             return (
               <div
                 key={order.id}
-                className="bg-white rounded-[22px] p-3.5 border border-slate-100 shadow-[0_2px_10px_rgba(0,0,0,0.02)] flex items-center justify-between"
+                className="bg-white rounded-xl border border-slate-200 p-4 transition shadow-xs hover:border-slate-300"
               >
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-2xl bg-[#f4f5f7] text-slate-800 font-bold text-xs flex items-center justify-center shrink-0">
-                    #{order.levelIndex}
+                {/* Header row: Direction + Price + PnL */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`font-black text-xs tracking-wider ${
+                        order.direction === 'SELL' ? 'text-rose-600' : 'text-emerald-600'
+                      }`}
+                    >
+                      {order.direction}
+                    </span>
+                    <span className="text-slate-300 font-normal">|</span>
+                    <span className="font-mono text-base font-black text-slate-900">
+                      {order.price.toFixed(2)}
+                    </span>
+                    <span className="text-xs text-slate-400 font-mono">
+                      ({order.lotSize} Lots)
+                    </span>
                   </div>
 
-                  <div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-bold text-slate-900 text-xs font-mono">
-                        {order.price.toFixed(2)}
-                      </span>
-                      <span
-                        className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-md ${
-                          isSell ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'
-                        }`}
-                      >
-                        {order.direction}
-                      </span>
+                  {/* P&L */}
+                  {isFilled && (
+                    <div
+                      className={`font-mono text-sm font-black ${
+                        orderPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                      }`}
+                    >
+                      {orderPnL >= 0 ? '+' : ''}${orderPnL.toFixed(2)}
                     </div>
-
-                    <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-0.5">
-                      <span>{order.lotSize} Lots</span>
-                      <span>•</span>
-                      <span>{dist === 0 ? 'At Spot' : `${dist > 0 ? `+${dist}` : dist} pts`}</span>
-                    </div>
-                  </div>
+                  )}
                 </div>
 
-                <div className="flex items-center gap-2">
-                  {order.status === 'PENDING' ? (
+                {/* Sub row: Contract ID, Market Symbol, and Action */}
+                <div className="flex items-center justify-between mt-2.5 pt-2.5 border-t border-slate-100 text-xs">
+                  <div className="text-slate-500 font-mono text-[11px]">
+                    {order.derivContractId ? (
+                      <span className="text-slate-700 font-bold">
+                        Deriv #{order.derivContractId}
+                      </span>
+                    ) : (
+                      <span className="text-amber-600 font-medium">
+                        Waiting for trigger at {order.price.toFixed(2)}
+                      </span>
+                    )}
+                  </div>
+
+                  {isFilled ? (
                     <button
-                      onClick={() => onSimulateFill(order.id)}
-                      className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-[#f4f5f7] text-slate-700 hover:bg-slate-200 transition cursor-pointer"
+                      type="button"
+                      disabled={isClosing}
+                      onClick={() => handleSingleClose(order.id)}
+                      className="px-3 py-1 rounded-lg bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-600 font-bold text-xs transition cursor-pointer disabled:opacity-50"
                     >
-                      Fill
+                      {isClosing ? 'Closing...' : 'Close Position'}
                     </button>
                   ) : (
-                    <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                      <CheckCircle2 className="w-2.5 h-2.5" />
-                      <span>Filled</span>
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onCancelOrder(order.id)}
+                      className="text-slate-400 hover:text-rose-600 font-medium text-xs cursor-pointer"
+                    >
+                      Cancel Order
+                    </button>
                   )}
-
-                  <button
-                    onClick={() => onCancelOrder(order.id)}
-                    className="p-1.5 rounded-full text-slate-400 hover:text-rose-600 transition cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
                 </div>
               </div>
             );

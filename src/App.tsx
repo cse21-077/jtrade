@@ -12,17 +12,8 @@ import { DerivAccount, ConnectionMode, MarketSymbol, PlacedOrder } from './types
 
 const SYMBOLS: MarketSymbol[] = [
   {
-    symbol: 'frxXAUUSD',
-    displayName: 'Gold / USD',
-    category: 'Metals',
-    decimals: 2,
-    minLot: 0.01,
-    lotStep: 0.01,
-    defaultPrice: 4170.0,
-  },
-  {
     symbol: '1HZ100V',
-    displayName: 'Volatility 100',
+    displayName: 'Volatility 100 (24/7)',
     category: 'Synthetics',
     decimals: 2,
     minLot: 0.1,
@@ -31,12 +22,30 @@ const SYMBOLS: MarketSymbol[] = [
   },
   {
     symbol: '1HZ75V',
-    displayName: 'Volatility 75',
+    displayName: 'Volatility 75 (24/7)',
     category: 'Synthetics',
     decimals: 2,
     minLot: 0.01,
     lotStep: 0.01,
     defaultPrice: 890.25,
+  },
+  {
+    symbol: 'frxXAUUSD',
+    displayName: 'Gold / USD',
+    category: 'Metals',
+    decimals: 2,
+    minLot: 0.01,
+    lotStep: 0.01,
+    defaultPrice: 2653.0,
+  },
+  {
+    symbol: 'cryBTCUSD',
+    displayName: 'Bitcoin / USD (24/7)',
+    category: 'Crypto',
+    decimals: 2,
+    minLot: 0.01,
+    lotStep: 0.01,
+    defaultPrice: 65420.0,
   },
   {
     symbol: 'frxEURUSD',
@@ -46,15 +55,6 @@ const SYMBOLS: MarketSymbol[] = [
     minLot: 0.01,
     lotStep: 0.01,
     defaultPrice: 1.085,
-  },
-  {
-    symbol: 'cryBTCUSD',
-    displayName: 'Bitcoin / USD',
-    category: 'Crypto',
-    decimals: 2,
-    minLot: 0.01,
-    lotStep: 0.01,
-    defaultPrice: 65420.0,
   },
 ];
 
@@ -70,7 +70,10 @@ const checkIsStandalone = () => {
 };
 
 export default function App() {
-  const [isStandalone, setIsStandalone] = useState<boolean>(() => checkIsStandalone());
+  const [isStandalone, setIsStandalone] = useState<boolean>(() => {
+    if (sessionStorage.getItem('pwa_bypassed') === 'true') return true;
+    return checkIsStandalone();
+  });
   const [showSplash, setShowSplash] = useState(true);
   const [selectedInitialMode, setSelectedInitialMode] = useState<ConnectionMode>('mt5');
   const [showConnectModal, setShowConnectModal] = useState(false);
@@ -92,7 +95,7 @@ export default function App() {
 
   const [account, setAccount] = useState<DerivAccount>(derivService.getAccount());
   const [selectedSymbol, setSelectedSymbol] = useState<MarketSymbol>(SYMBOLS[0]);
-  const [spotPrice, setSpotPrice] = useState<number>(4170.0);
+  const [spotPrice, setSpotPrice] = useState<number>(1420.5);
   const [orders, setOrders] = useState<PlacedOrder[]>([]);
 
   // Listen to Deriv account status
@@ -139,13 +142,20 @@ export default function App() {
   const handleSplashConnected = (acc: DerivAccount) => {
     setAccount(acc);
     setShowSplash(false);
-    setActiveTab('grid');
+    setActiveTab('home');
+  };
+
+  const handleDisconnect = () => {
+    derivService.clearToken();
+    setAccount(derivService.getAccount());
+    setShowSplash(true);
+    setActiveTab('home');
   };
 
   const handleConnectSuccess = (acc: DerivAccount) => {
     setAccount(acc);
     setShowConnectModal(false);
-    setActiveTab('grid');
+    setActiveTab('home');
   };
 
   const handleDeployOrders = (newOrders: PlacedOrder[]) => {
@@ -163,6 +173,10 @@ export default function App() {
       {!isStandalone ? (
         <PWAInstallGate
           onCheckStatus={() => setIsStandalone(checkIsStandalone())}
+          onBypass={() => {
+            sessionStorage.setItem('pwa_bypassed', 'true');
+            setIsStandalone(true);
+          }}
         />
       ) : showSplash ? (
         <SplashScreen
@@ -182,6 +196,8 @@ export default function App() {
                   setActiveTab('grid');
                 }}
                 onOpenConnect={() => setShowConnectModal(true)}
+                onDisconnect={handleDisconnect}
+                onDeployOrder={(order) => setOrders((prev) => [order, ...prev])}
               />
             )}
 
@@ -203,17 +219,23 @@ export default function App() {
                 orders={orders}
                 spotPrice={spotPrice}
                 onCancelOrder={(id) => setOrders((prev) => prev.filter((o) => o.id !== id))}
-                onCancelAll={() => setOrders([])}
-                onSimulateFill={(id) =>
-                  setOrders((prev) =>
-                    prev.map((o) => (o.id === id ? { ...o, status: 'FILLED' } : o))
-                  )
-                }
-                onFillAllPending={() =>
-                  setOrders((prev) =>
-                    prev.map((o) => (o.status === 'PENDING' ? { ...o, status: 'FILLED' } : o))
-                  )
-                }
+                onCancelAll={() => setOrders((prev) => prev.filter((o) => o.status === 'FILLED'))}
+                onClosePosition={async (id) => {
+                  const target = orders.find((o) => o.id === id);
+                  if (target?.derivContractId) {
+                    await derivService.closeRealPosition(String(target.derivContractId));
+                  }
+                  setOrders((prev) => prev.filter((o) => o.id !== id));
+                }}
+                onBulkCloseAll={async () => {
+                  const contractIds = orders
+                    .filter((o) => o.derivContractId)
+                    .map((o) => String(o.derivContractId));
+                  if (contractIds.length > 0) {
+                    await derivService.bulkClosePositions(contractIds);
+                  }
+                  setOrders([]);
+                }}
                 onSwitchToGrid={() => setActiveTab('grid')}
               />
             )}

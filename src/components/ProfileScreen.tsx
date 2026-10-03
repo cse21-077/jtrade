@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { DerivAccount } from '../types/trading';
 import { Settings, Globe, HelpCircle, ChevronRight, Quote, Download, LogOut, Server } from 'lucide-react';
 import { PWAInstallButton } from './PWAInstallButton';
+import { MascotHead } from './MascotHead';
 
 interface ProfileScreenProps {
   account: DerivAccount;
@@ -15,28 +16,33 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onDisconnect,
 }) => {
   const [showFAQ, setShowFAQ] = useState(false);
+  const accountId = account.loginId || account.mt5Login || 'Demo-Account';
+  const isReal = !account.isDemo && accountId.startsWith('CR');
 
   return (
     <div className="pb-28 pt-4 px-5 max-w-[400px] mx-auto space-y-6 font-sans select-none bg-white min-h-screen">
-      {/* Top Profile Header matching Screen 3 in reference image */}
+      {/* Top Profile Header with Connected Green Mascot */}
       <div className="flex flex-col items-center text-center">
-        {/* Avatar circle matching reference image */}
-        <div className="w-16 h-16 rounded-full bg-slate-900 p-0.5 shadow-sm mb-2.5">
-          <div className="w-full h-full rounded-full bg-[#f4f5f7] flex items-center justify-center font-bold text-slate-800 text-lg">
-            {account.fullName ? account.fullName.slice(0, 2).toUpperCase() : 'PW'}
-          </div>
+        <div className="w-18 h-18 rounded-full bg-emerald-50 border-2 border-emerald-400 p-1 shadow-sm mb-2 flex items-center justify-center relative">
+          <MascotHead status="success" size={54} />
+          <span className="absolute bottom-0 right-0 w-4 h-4 rounded-full bg-emerald-500 border-2 border-white flex items-center justify-center text-[9px] text-white font-bold">
+            ✓
+          </span>
         </div>
 
         {/* User name & status pill */}
         <div className="flex items-center gap-2">
-          <h2 className="text-xl font-bold text-slate-900">
-            {account.fullName || 'Paul Wilson'}
+          <h2 className="text-xl font-bold text-slate-900 font-mono">
+            {accountId}
           </h2>
-          <span className="px-2.5 py-0.5 rounded-full bg-[#fce7f3] text-rose-800 text-[11px] font-semibold flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
-            <span>Active</span>
+          <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-semibold flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+            <span>{isReal ? 'Live Deriv Account' : 'Demo Virtual'}</span>
           </span>
         </div>
+        <p className="text-xs text-slate-400 mt-1">
+          Balance: {account.currency || 'USD'} {account.balance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+        </p>
       </div>
 
       {/* Smooth Wave Chart (Screen 3 in reference image) */}
@@ -146,10 +152,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         <PWAInstallButton />
         <button
           onClick={onDisconnect}
-          className="text-slate-400 hover:text-slate-800 font-medium flex items-center gap-1 cursor-pointer"
+          className="text-rose-600 hover:text-rose-700 font-bold flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 transition cursor-pointer"
         >
           <LogOut className="w-3.5 h-3.5" />
-          <span>Switch Account</span>
+          <span>Disconnect Account</span>
         </button>
       </div>
     </div>
