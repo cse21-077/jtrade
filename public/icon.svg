@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="50%" stop-color="#0284c7"/>
+      <stop offset="100%" stop-color="#0369a1"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#0284c7" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bgGrad)"/>
+  <!-- Grid Trading Lines accent -->
+  <path d="M64 128 H448 M64 256 H448 M64 384 H448" stroke="#ffffff" stroke-opacity="0.15" stroke-width="4" stroke-dasharray="8 8"/>
+  <path d="M128 64 V448 M256 64 V448 M384 64 V448" stroke="#ffffff" stroke-opacity="0.15" stroke-width="4" stroke-dasharray="8 8"/>
+  <!-- Bold Stylized J -->
+  <path d="M184 144 H344 V196 H292 V328 C292 376 256 408 204 408 C156 408 128 376 128 336 H184 C184 352 192 364 206 364 C224 364 236 348 236 324 V196 H184 V144 Z" fill="#ffffff" filter="url(#glow)"/>
+  <!-- Indicator Dots -->
+  <circle cx="344" cy="144" r="16" fill="#67e8f9"/>
+</svg>
