@@ -58,11 +58,37 @@ const SYMBOLS: MarketSymbol[] = [
   },
 ];
 
+import { PWAInstallGate } from './components/PWAInstallGate';
+
+const checkIsStandalone = () => {
+  if (typeof window === 'undefined') return false;
+  return (
+    window.matchMedia('(display-mode: standalone)').matches ||
+    (window.navigator as any).standalone === true ||
+    document.referrer.includes('android-app://')
+  );
+};
+
 export default function App() {
+  const [isStandalone, setIsStandalone] = useState<boolean>(() => checkIsStandalone());
   const [showSplash, setShowSplash] = useState(true);
   const [selectedInitialMode, setSelectedInitialMode] = useState<ConnectionMode>('mt5');
   const [showConnectModal, setShowConnectModal] = useState(false);
   const [activeTab, setActiveTab] = useState<AppTab>('home');
+
+  // React to standalone display-mode changes dynamically
+  useEffect(() => {
+    const handleModeChange = () => {
+      setIsStandalone(checkIsStandalone());
+    };
+    const mediaQuery = window.matchMedia('(display-mode: standalone)');
+    mediaQuery.addEventListener('change', handleModeChange);
+    window.addEventListener('appinstalled', handleModeChange);
+    return () => {
+      mediaQuery.removeEventListener('change', handleModeChange);
+      window.removeEventListener('appinstalled', handleModeChange);
+    };
+  }, []);
 
   const [account, setAccount] = useState<DerivAccount>(derivService.getAccount());
   const [selectedSymbol, setSelectedSymbol] = useState<MarketSymbol>(SYMBOLS[0]);
@@ -133,8 +159,12 @@ export default function App() {
     <div className="min-h-screen bg-white text-slate-800 flex flex-col font-sans selection:bg-slate-200">
       <OfflineIndicator />
 
-      {/* Screen 1: Splash / Welcome Screen with Direct Account Connection */}
-      {showSplash ? (
+      {/* PWA Gate: Only when opened as PWA (standalone) can users access the app */}
+      {!isStandalone ? (
+        <PWAInstallGate
+          onCheckStatus={() => setIsStandalone(checkIsStandalone())}
+        />
+      ) : showSplash ? (
         <SplashScreen
           onConnected={handleSplashConnected}
         />
