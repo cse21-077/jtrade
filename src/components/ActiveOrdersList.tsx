@@ -20,11 +20,11 @@ export const ActiveOrdersList: React.FC<ActiveOrdersListProps> = ({
   onFillAllPending,
 }) => {
   const pendingCount = orders.filter((o) => o.status === 'PENDING').length;
-  const filledCount = orders.filter((o) => o.status === 'FILLED' || o.status === 'TRIGGERED').length;
+  const filledCount = orders.filter((o) => o.status === 'FILLED').length;
 
   // Calculate live unrealized P&L for filled positions
   const totalPnL = orders
-    .filter((o) => o.status === 'FILLED' || o.status === 'TRIGGERED')
+    .filter((o) => o.status === 'FILLED')
     .reduce((acc, order) => {
       // For SELL: profit if spot < entryPrice; for BUY: profit if spot > entryPrice
       const diff =
@@ -161,7 +161,7 @@ export const ActiveOrdersList: React.FC<ActiveOrdersListProps> = ({
               {orders.map((order) => {
                 const dist = +(spotPrice - order.price).toFixed(2);
                 const isSell = order.direction === 'SELL';
-                const isFilled = order.status === 'FILLED' || order.status === 'TRIGGERED';
+                const isFilled = order.status === 'FILLED';
 
                 return (
                   <tr
@@ -212,6 +212,16 @@ export const ActiveOrdersList: React.FC<ActiveOrdersListProps> = ({
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
                           <Clock className="w-2.5 h-2.5" />
                           <span>Pending</span>
+                        </span>
+                      ) : order.status === 'FAILED' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                          <AlertCircle className="w-2.5 h-2.5" />
+                          <span>Rejected</span>
+                        </span>
+                      ) : order.status === 'TRIGGERED' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-50 text-sky-700 border border-sky-200">
+                          <Clock className="w-2.5 h-2.5" />
+                          <span>Submitting</span>
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">

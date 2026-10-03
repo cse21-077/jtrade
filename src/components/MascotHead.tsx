@@ -178,10 +178,10 @@ export const MascotHead: React.FC<MascotHeadProps> = ({
         {isSuccess ? (
           <div className="space-y-0.5">
             <div className="text-sm font-black text-emerald-600 tracking-tight flex items-center justify-center gap-1.5">
-              <span>Connected! Launching Dashboard...</span>
+              <span>Deriv Account Connected</span>
             </div>
             <p className="text-[11px] text-slate-500 font-medium">
-              Real account authenticated with Deriv liquidity pool
+              Account connection is active
             </p>
           </div>
         ) : isConnecting ? (

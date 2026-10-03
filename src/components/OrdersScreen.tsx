@@ -35,7 +35,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const pending = orders.filter((o) => o.status === 'PENDING');
-  const filled = orders.filter((o) => o.status === 'FILLED' || o.status === 'TRIGGERED');
+  const filled = orders.filter((o) => o.status === 'FILLED');
 
   // Calculate live floating P&L
   const totalPnL = filled.reduce((acc, order) => {
@@ -45,7 +45,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
   }, 0);
 
   const filteredOrders = orders.filter((o) => {
-    if (filter === 'filled') return o.status === 'FILLED' || o.status === 'TRIGGERED';
+    if (filter === 'filled') return o.status === 'FILLED';
     if (filter === 'pending') return o.status === 'PENDING';
     return true;
   });
@@ -261,7 +261,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
       ) : (
         <div className="space-y-3">
           {filteredOrders.map((order) => {
-            const isFilled = order.status === 'FILLED' || order.status === 'TRIGGERED';
+            const isFilled = order.status === 'FILLED';
             const orderPnL = isFilled
               ? (order.direction === 'SELL' ? order.price - spotPrice : spotPrice - order.price) *
                 order.lotSize *
@@ -313,6 +313,10 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
                       <span className="text-slate-700 font-bold">
                         Deriv #{order.derivContractId}
                       </span>
+                    ) : order.status === 'FAILED' ? (
+                      <span className="text-rose-700 font-medium">Deriv rejected this trade</span>
+                    ) : order.status === 'TRIGGERED' ? (
+                      <span className="text-sky-700 font-medium">Submitting to Deriv...</span>
                     ) : (
                       <span className="text-amber-600 font-medium">
                         Waiting for trigger at {order.price.toFixed(2)}

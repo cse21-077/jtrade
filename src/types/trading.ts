@@ -53,13 +53,26 @@ export interface PlacedOrder {
   orderType: OrderType;
   price: number;
   lotSize: number;
-  status: 'PENDING' | 'TRIGGERED' | 'FILLED' | 'CANCELLED';
+  status: 'PENDING' | 'TRIGGERED' | 'FILLED' | 'CANCELLED' | 'FAILED';
   tpPrice?: number;
   slPrice?: number;
   pnl?: number;
   createdAt: number;
   filledAt?: number;
   derivContractId?: string | number;
+}
+
+export interface TradeNotice {
+  success: boolean;
+  message: string;
+  errorMessage?: string;
+  trades: Array<{
+    symbol: string;
+    direction: OrderDirection;
+    price: number;
+    lotSize: number;
+    contractId?: string;
+  }>;
 }
 
 export type ConnectionMode = 'mt5' | 'token' | 'demo';

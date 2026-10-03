@@ -6,6 +6,7 @@ import {
   OrderType,
   MarketSymbol,
   PlacedOrder,
+  TradeNotice,
 } from '../types/trading';
 import {
   TrendingDown,
@@ -14,8 +15,6 @@ import {
   ChevronDown,
   ChevronUp,
   Sparkles,
-  Zap,
-  Layers,
   Minus,
   Plus,
   Loader2,
@@ -29,9 +28,10 @@ interface GridInputsScreenProps {
   onSelectSymbol: (sym: MarketSymbol) => void;
   symbols: MarketSymbol[];
   onDeployOrders: (orders: PlacedOrder[]) => void;
+  onTradeNotice: (notice: TradeNotice) => void;
 }
 
-type EasyPresetType = 'SELL_STOP' | 'SELL_LIMIT' | 'BUY_LIMIT' | 'BUY_STOP';
+type TradeAction = 'SELL_STOP' | 'SELL_LIMIT' | 'BUY_LIMIT' | 'BUY_STOP' | 'BUY_MARKET' | 'SELL_MARKET';
 
 export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
   account,
@@ -40,9 +40,9 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
   onSelectSymbol,
   symbols,
   onDeployOrders,
+  onTradeNotice,
 }) => {
-  // Preset trading action
-  const [tradeAction, setTradeAction] = useState<EasyPresetType>('SELL_STOP');
+  const [tradeAction, setTradeAction] = useState<TradeAction>('SELL_STOP');
 
   // Simple, intuitive trading fields
   const [startPrice, setStartPrice] = useState<number>(4165.0);
@@ -53,10 +53,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
   const [ordersPerLevel, setOrdersPerLevel] = useState<number>(1);
   const [showFormulaDetails, setShowFormulaDetails] = useState(false);
 
-  // Execution Mode: 'immediate' (execute all into market immediately via API) or 'ladder' (trigger on price reach)
-  const [executionMode, setExecutionMode] = useState<'immediate' | 'ladder'>('immediate');
   const [isDeploying, setIsDeploying] = useState(false);
-  const [deployFeedback, setDeployFeedback] = useState<string | null>(null);
 
   // Auto-align default start price when market spot updates or action changes
   useEffect(() => {
@@ -65,16 +62,19 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
         const initial = +(spotPrice - 5.0).toFixed(selectedSymbol.decimals);
         setStartPrice(initial > 0 ? initial : +(spotPrice * 0.99).toFixed(selectedSymbol.decimals));
         setStepDirection('down');
-      } else {
+      } else if (tradeAction === 'SELL_LIMIT' || tradeAction === 'BUY_STOP') {
         const initial = +(spotPrice + 5.0).toFixed(selectedSymbol.decimals);
         setStartPrice(initial);
         setStepDirection('up');
+      } else {
+        setStartPrice(+spotPrice.toFixed(selectedSymbol.decimals));
       }
     }
   }, [tradeAction, selectedSymbol]);
 
   // Derive direction & order type
   const direction: OrderDirection = tradeAction.startsWith('SELL') ? 'SELL' : 'BUY';
+  const isMarketOrder = tradeAction.endsWith('MARKET');
   const orderType: OrderType = tradeAction.includes('STOP') ? 'STOP' : 'LIMIT';
 
   // Calculate ladder levels
@@ -135,58 +135,85 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
 
   const handleDeploy = async () => {
     setIsDeploying(true);
-    setDeployFeedback('Sending real trade orders to Deriv API...');
-
     const newOrders: PlacedOrder[] = [];
+    const openedTrades: TradeNotice['trades'] = [];
+    let executionError = '';
 
-    for (const level of ladderLevels) {
-      for (let s = 1; s <= level.ordersCount; s++) {
-        const orderId = `ORD-${Date.now().toString(36).toUpperCase()}-${level.levelIndex + 1}-${s}`;
+    try {
+      for (const level of ladderLevels) {
+        for (let s = 1; s <= level.ordersCount; s++) {
+          const createdAt = Date.now();
+          const orderId = `ORD-${createdAt.toString(36).toUpperCase()}-${level.levelIndex + 1}-${s}`;
 
-        if (executionMode === 'immediate') {
-          // Send real trade to Deriv WebSocket!
-          const res = await derivService.executeRealTrade({
-            symbol: selectedSymbol.symbol,
-            direction,
-            price: level.price,
-            lotSize: level.lotSize,
-            orderType: 'MARKET_GRID',
-          });
+          if (isMarketOrder) {
+            const res = await derivService.executeRealTrade({
+              symbol: selectedSymbol.symbol,
+              direction,
+              lotSize: level.lotSize,
+              orderType: 'MARKET_GRID',
+            });
 
-          newOrders.push({
-            id: orderId,
-            levelIndex: level.levelIndex + 1,
-            subIndex: s,
-            symbol: selectedSymbol.symbol,
-            direction,
-            orderType: 'MARKET_GRID',
-            price: level.price,
-            lotSize: level.lotSize,
-            status: 'FILLED', // Directly filled into the market! No manual button clicking!
-            createdAt: Date.now(),
-            filledAt: Date.now(),
-            derivContractId: res.contractId,
-          });
-        } else {
-          // Ladder order (triggers automatically when market price touches it)
-          newOrders.push({
-            id: orderId,
-            levelIndex: level.levelIndex + 1,
-            subIndex: s,
-            symbol: selectedSymbol.symbol,
-            direction,
-            orderType,
-            price: level.price,
-            lotSize: level.lotSize,
-            status: 'PENDING',
-            createdAt: Date.now(),
-          });
+            if (!res.success || !res.contractId) {
+              executionError = res.message || 'Deriv did not open the trade.';
+              break;
+            }
+
+            openedTrades.push({
+              symbol: selectedSymbol.symbol,
+              direction,
+              price: spotPrice,
+              lotSize: level.lotSize,
+              contractId: res.contractId,
+            });
+            newOrders.push({
+              id: orderId,
+              levelIndex: level.levelIndex + 1,
+              subIndex: s,
+              symbol: selectedSymbol.symbol,
+              direction,
+              orderType: 'MARKET_GRID',
+              price: spotPrice,
+              lotSize: level.lotSize,
+              status: 'FILLED',
+              createdAt,
+              filledAt: Date.now(),
+              derivContractId: res.contractId,
+            });
+          } else {
+            newOrders.push({
+              id: orderId,
+              levelIndex: level.levelIndex + 1,
+              subIndex: s,
+              symbol: selectedSymbol.symbol,
+              direction,
+              orderType,
+              price: level.price,
+              lotSize: level.lotSize,
+              status: 'PENDING',
+              createdAt,
+            });
+          }
         }
+        if (executionError) break;
       }
+    } catch (error: any) {
+      executionError = error?.message || 'Trade execution failed.';
     }
 
     setIsDeploying(false);
-    onDeployOrders(newOrders);
+    if (newOrders.length > 0) onDeployOrders(newOrders);
+    if (isMarketOrder) {
+      onTradeNotice({
+        success: openedTrades.length > 0,
+        message: executionError
+          ? openedTrades.length > 0
+            ? `${openedTrades.length} trade(s) opened before Deriv rejected the next order.`
+            : 'Deriv did not open a trade.'
+          : `${openedTrades.length} ${direction} market trade(s) opened on ${selectedSymbol.displayName}.`,
+        errorMessage: executionError || undefined,
+        trades: openedTrades,
+      });
+    }
   };
 
   return (
@@ -228,36 +255,15 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
         })}
       </div>
 
-      {/* Execution Style Switcher: Immediate Market vs Ladder Triggers */}
-      <div className="bg-[#f4f5f7] p-1 rounded-2xl flex gap-1 text-xs font-bold">
-        <button
-          type="button"
-          onClick={() => setExecutionMode('immediate')}
-          className={`flex-1 py-2 rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 ${
-            executionMode === 'immediate'
-              ? 'bg-[#18181b] text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <Zap className="w-3.5 h-3.5 text-amber-400" />
-          <span>Execute All Now (Live API)</span>
+      <div className="grid grid-cols-2 gap-2 text-xs font-bold">
+        <button type="button" onClick={() => setTradeAction('BUY_MARKET')} className={`py-3 rounded-xl flex items-center justify-center gap-1.5 ${tradeAction === 'BUY_MARKET' ? 'bg-emerald-600 text-white' : 'bg-emerald-50 text-emerald-800'}`}>
+          <TrendingUp className="w-4 h-4" /> BUY MARKET · NOW
         </button>
-
-        <button
-          type="button"
-          onClick={() => setExecutionMode('ladder')}
-          className={`flex-1 py-2 rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 ${
-            executionMode === 'ladder'
-              ? 'bg-[#18181b] text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <Layers className="w-3.5 h-3.5 text-sky-400" />
-          <span>Auto Price Trigger</span>
+        <button type="button" onClick={() => setTradeAction('SELL_MARKET')} className={`py-3 rounded-xl flex items-center justify-center gap-1.5 ${tradeAction === 'SELL_MARKET' ? 'bg-rose-600 text-white' : 'bg-rose-50 text-rose-800'}`}>
+          <TrendingDown className="w-4 h-4" /> SELL MARKET · NOW
         </button>
       </div>
 
-      {/* 4 Simple Trading Actions: Sell Stop, Buy Limit, Sell Limit, Buy Stop */}
       <div className="bg-[#f4f5f7] rounded-2xl p-1 grid grid-cols-2 gap-1 text-xs font-bold">
         <button
           type="button"
@@ -272,7 +278,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
             <TrendingDown className="w-3.5 h-3.5 text-rose-400" />
             <span>SELL STOP</span>
           </span>
-          <span className="text-[9px] font-normal opacity-70">Sell below spot (4165)</span>
+          <span className="text-[9px] font-normal opacity-70">Trigger when price falls to level</span>
         </button>
 
         <button
@@ -288,7 +294,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
             <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
             <span>BUY LIMIT</span>
           </span>
-          <span className="text-[9px] font-normal opacity-70">Buy dips below spot</span>
+          <span className="text-[9px] font-normal opacity-70">Trigger when price falls to level</span>
         </button>
 
         <button
@@ -304,7 +310,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
             <TrendingDown className="w-3.5 h-3.5 text-rose-400" />
             <span>SELL LIMIT</span>
           </span>
-          <span className="text-[9px] font-normal opacity-70">Sell rallies above spot</span>
+          <span className="text-[9px] font-normal opacity-70">Trigger when price rises to level</span>
         </button>
 
         <button
@@ -320,7 +326,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
             <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
             <span>BUY STOP</span>
           </span>
-          <span className="text-[9px] font-normal opacity-70">Buy breakout above spot</span>
+          <span className="text-[9px] font-normal opacity-70">Trigger when price rises to level</span>
         </button>
       </div>
 
@@ -511,21 +517,18 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
           <div className="flex items-center gap-1.5 text-[10px] font-bold text-neutral-400 uppercase tracking-wider">
             <Sparkles className="w-3 h-3 text-[#fbcfe8]" />
             <span>
-              {executionMode === 'immediate'
-                ? 'Ready for Live API Execution'
-                : 'Ready for Trigger Ladder'}
+              {isMarketOrder ? 'Live market execution' : 'Live price-triggered execution'}
             </span>
           </div>
 
           <div className="text-sm font-bold mt-1 text-neutral-100 leading-snug">
-            Placing {totalOrders} {direction} {executionMode === 'immediate' ? 'Market' : orderType} orders of {lotSize} lots from{' '}
-            <span className="text-white font-mono">{startPrice.toFixed(selectedSymbol.decimals)}</span>{' '}
-            {stepDirection === 'down' ? 'down' : 'up'} to{' '}
-            <span className="text-white font-mono">{endPrice.toFixed(selectedSymbol.decimals)}</span>
+            {isMarketOrder
+              ? `Execute ${totalOrders} ${direction} market order(s) now at the live price.`
+              : `Place ${totalOrders} ${direction} ${orderType} trigger(s) from ${startPrice.toFixed(selectedSymbol.decimals)} ${stepDirection} to ${endPrice.toFixed(selectedSymbol.decimals)}.`}
           </div>
 
           <div className="text-[11px] text-neutral-400 font-mono mt-1">
-            Total volume: {totalVolume} Lots • {executionMode === 'immediate' ? 'Fills instantly into market' : 'Triggers as price hits level'}
+            Total volume: {totalVolume} Lots · {isMarketOrder ? 'Submitted to Deriv now' : 'Sent to Deriv when the selected price is reached'}
           </div>
         </div>
 
@@ -542,7 +545,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
             </>
           ) : (
             <>
-              <span>Place {totalOrders} Orders to Account</span>
+              <span>{isDeploying ? 'Sending to Deriv...' : isMarketOrder ? `Execute ${totalOrders} Market Order(s) Now` : `Arm ${totalOrders} Price Trigger(s)`}</span>
               <ArrowRight className="w-4 h-4" />
             </>
           )}

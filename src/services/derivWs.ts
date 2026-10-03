@@ -192,28 +192,9 @@ export class DerivService {
             this.initWebSocket().then(resolve).catch(reject);
           }, 600);
         } else {
-          // If token was provided, allow user to test and proceed
-          if (this.token) {
-            const loginId = 'CR' + Math.floor(1000000 + Math.random() * 9000000);
-            this.accountInfo = {
-              isConnected: true,
-              isDemo: false,
-              connectionType: 'token',
-              token: this.token,
-              appId: this.currentAppId,
-              loginId,
-              balance: 1000.0,
-              currency: 'USD',
-              fullName: `Deriv Live (${loginId})`,
-              latencyMs: 35,
-            };
-            this.notifyStatus(true, `Connected: ${loginId} (USD 1,000.00)`);
-            resolve(this.accountInfo);
-          } else {
-            this.accountInfo.isConnected = false;
-            this.notifyStatus(false, 'Deriv server connection failed. Please check internet connection.');
-            reject(new Error('Connection failed after trying all endpoints'));
-          }
+          this.accountInfo.isConnected = false;
+          this.notifyStatus(false, 'Deriv server connection failed. Please check internet connection.');
+          reject(new Error('Connection failed after trying all endpoints'));
         }
       };
 
@@ -424,7 +405,7 @@ export class DerivService {
           const data = JSON.parse(event.data);
 
           // Handle Proposal Response
-          if (data.req_id === proposalReqId || data.msg_type === 'proposal') {
+          if (data.req_id === proposalReqId) {
             if (data.error) {
               cleanup();
               const err = data.error.message || 'Deriv proposal rejected';
@@ -448,7 +429,7 @@ export class DerivService {
           }
 
           // Handle Buy Response
-          if (data.req_id === buyReqId || data.msg_type === 'buy') {
+          if (data.req_id === buyReqId) {
             if (data.error) {
               cleanup();
               const err = data.error.message || 'Deriv buy order failed';

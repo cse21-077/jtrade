@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { SplashScreen } from './components/SplashScreen';
 import { ConnectPortal } from './components/ConnectPortal';
 import { HomeScreen } from './components/HomeScreen';
@@ -8,7 +8,8 @@ import { ProfileScreen } from './components/ProfileScreen';
 import { BottomNavBar, AppTab } from './components/BottomNavBar';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { derivService } from './services/derivWs';
-import { DerivAccount, ConnectionMode, MarketSymbol, PlacedOrder } from './types/trading';
+import { DerivAccount, ConnectionMode, MarketSymbol, PlacedOrder, TradeNotice } from './types/trading';
+import { CheckCircle2, CircleAlert, X } from 'lucide-react';
 
 const SYMBOLS: MarketSymbol[] = [
   {
@@ -97,6 +98,8 @@ export default function App() {
   const [selectedSymbol, setSelectedSymbol] = useState<MarketSymbol>(SYMBOLS[0]);
   const [spotPrice, setSpotPrice] = useState<number>(1420.5);
   const [orders, setOrders] = useState<PlacedOrder[]>([]);
+  const [tradeNotice, setTradeNotice] = useState<TradeNotice | null>(null);
+  const executingOrderIds = useRef(new Set<string>());
 
   // Listen to Deriv account status
   useEffect(() => {
@@ -116,28 +119,91 @@ export default function App() {
     return unsub;
   }, [selectedSymbol]);
 
-  // Check order triggers on spot tick
+  // Execute client-selected limit/stop triggers only after the live quote reaches their level.
   useEffect(() => {
     if (orders.length === 0) return;
 
-    setOrders((prev) => {
-      let changed = false;
-      const updated = prev.map((order) => {
-        if (order.status !== 'PENDING') return order;
-        const reached =
-          order.direction === 'SELL'
-            ? spotPrice <= order.price || Math.abs(spotPrice - order.price) < 0.2
-            : spotPrice >= order.price || Math.abs(spotPrice - order.price) < 0.2;
-
-        if (reached) {
-          changed = true;
-          return { ...order, status: 'FILLED' as const, filledAt: Date.now() };
-        }
-        return order;
-      });
-      return changed ? updated : prev;
+    const triggeringOrders = orders.filter((order) => {
+      if (
+        order.status !== 'PENDING' ||
+        order.orderType === 'MARKET_GRID' ||
+        executingOrderIds.current.has(order.id)
+      ) return false;
+      if (order.direction === 'BUY') {
+        return order.orderType === 'LIMIT' ? spotPrice <= order.price : spotPrice >= order.price;
+      }
+      return order.orderType === 'LIMIT' ? spotPrice >= order.price : spotPrice <= order.price;
     });
-  }, [spotPrice]);
+    if (triggeringOrders.length === 0) return;
+
+    triggeringOrders.forEach((order) => executingOrderIds.current.add(order.id));
+    const triggeringIds = new Set(triggeringOrders.map((order) => order.id));
+    setOrders((previous) => previous.map((order) =>
+      triggeringIds.has(order.id) && order.status === 'PENDING'
+        ? { ...order, status: 'TRIGGERED' }
+        : order
+    ));
+
+    void Promise.all(triggeringOrders.map(async (order) => {
+      try {
+        const result = await derivService.executeRealTrade({
+          symbol: order.symbol,
+          direction: order.direction,
+          price: order.price,
+          lotSize: order.lotSize,
+          orderType: order.orderType,
+        });
+        return { order, result };
+      } catch (error) {
+        return {
+          order,
+          result: {
+            success: false,
+            contractId: '',
+            message: error instanceof Error ? error.message : 'Deriv trade execution failed.',
+          },
+        };
+      }
+    })).then((results) => {
+      triggeringOrders.forEach((order) => executingOrderIds.current.delete(order.id));
+      const openedResults = results.filter(({ result }) => result.success && result.contractId);
+      const failedResults = results.filter(({ result }) => !result.success || !result.contractId);
+      const openedTrades: TradeNotice['trades'] = openedResults.map(({ order, result }) => ({
+        symbol: order.symbol,
+        direction: order.direction,
+        price: spotPrice,
+        lotSize: order.lotSize,
+        contractId: result.contractId,
+      }));
+      const completedAt = Date.now();
+
+      setOrders((previous) => previous.map((order) => {
+        const outcome = results.find(({ order: triggered }) => triggered.id === order.id);
+        if (!outcome) return order;
+        if (outcome.result.success && outcome.result.contractId) {
+          return {
+            ...order,
+            status: 'FILLED',
+            filledAt: completedAt,
+            derivContractId: outcome.result.contractId,
+          };
+        }
+        return { ...order, status: 'FAILED' };
+      }));
+
+      const errorMessage = failedResults
+        .map(({ result }) => result.message || 'Deriv did not open the trade.')
+        .join(' ');
+      setTradeNotice({
+        success: openedTrades.length > 0,
+        message: failedResults.length > 0
+          ? `${openedTrades.length} trade(s) opened; ${failedResults.length} failed.`
+          : `${openedTrades.length} price-triggered trade(s) opened on Deriv.`,
+        errorMessage: errorMessage || undefined,
+        trades: openedTrades,
+      });
+    });
+  }, [orders, spotPrice]);
 
   const handleSplashConnected = (acc: DerivAccount) => {
     setAccount(acc);
@@ -192,12 +258,8 @@ export default function App() {
                 account={account}
                 spotPrice={spotPrice}
                 selectedSymbol={selectedSymbol}
-                onOpenGrid={(preset) => {
-                  setActiveTab('grid');
-                }}
-                onOpenConnect={() => setShowConnectModal(true)}
-                onDisconnect={handleDisconnect}
                 onDeployOrder={(order) => setOrders((prev) => [order, ...prev])}
+                onTradeNotice={setTradeNotice}
               />
             )}
 
@@ -210,6 +272,7 @@ export default function App() {
                 onSelectSymbol={setSelectedSymbol}
                 symbols={SYMBOLS}
                 onDeployOrders={handleDeployOrders}
+                onTradeNotice={setTradeNotice}
               />
             )}
 
@@ -270,6 +333,70 @@ export default function App() {
                 onSuccess={handleConnectSuccess}
                 onCancel={() => setShowConnectModal(false)}
               />
+            </div>
+          )}
+
+          {tradeNotice && (
+            <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/45 p-4" role="presentation">
+              <section
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="trade-result-title"
+                className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    {tradeNotice.success
+                      ? <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" />
+                      : <CircleAlert className="h-5 w-5 shrink-0 text-rose-600" />}
+                    <h2 id="trade-result-title" className="text-base font-bold text-slate-900">
+                      {tradeNotice.success
+                        ? tradeNotice.errorMessage ? 'Partial execution' : 'Trades opened'
+                        : 'Trade not opened'}
+                    </h2>
+                  </div>
+                  <button type="button" onClick={() => setTradeNotice(null)} className="p-1 text-slate-400 hover:text-slate-800" aria-label="Close dialog">
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <p className="mt-3 text-sm text-slate-700">{tradeNotice.message}</p>
+                {(!tradeNotice.success || tradeNotice.errorMessage) && (
+                  <p className="mt-2 text-xs text-slate-500">
+                    {tradeNotice.errorMessage || tradeNotice.message} The market may be closed for the weekend or outside this symbol's trading hours.
+                  </p>
+                )}
+                {tradeNotice.trades.length > 0 && (
+                  <div className="mt-4 max-h-48 space-y-2 overflow-y-auto border-y border-slate-100 py-3">
+                    {tradeNotice.trades.map((trade, index) => (
+                      <div key={`${trade.contractId || trade.symbol}-${index}`} className="flex items-center justify-between gap-2 text-xs">
+                        <span className="font-semibold text-slate-800">{trade.direction} {trade.symbol}</span>
+                        <span className="text-right font-mono text-slate-500">
+                          {trade.lotSize} lots{trade.contractId ? ` · #${trade.contractId}` : ''}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="mt-4 flex gap-2">
+                  {tradeNotice.trades.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => { setTradeNotice(null); setActiveTab('orders'); }}
+                      className="flex-1 rounded-lg bg-slate-900 px-3 py-2.5 text-xs font-bold text-white hover:bg-slate-700"
+                    >
+                      View open trades
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setTradeNotice(null)}
+                    className="rounded-lg border border-slate-200 px-3 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                  >
+                    Close
+                  </button>
+                </div>
+              </section>
             </div>
           )}
         </div>
