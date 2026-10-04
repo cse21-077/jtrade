@@ -26,6 +26,10 @@ export const ConnectPortal: React.FC<ConnectPortalProps> = ({
 
   // Token state
   const [token, setToken] = useState(currentAccount.token || '');
+  const [appId, setAppId] = useState(derivService.getAppId());
+  const [optionsAccountType, setOptionsAccountType] = useState<'demo' | 'real'>(
+    currentAccount.isConnected && !currentAccount.isDemo ? 'real' : 'demo'
+  );
   const [showPassword, setShowPassword] = useState(false);
 
   const [loading, setLoading] = useState(false);
@@ -61,12 +65,16 @@ export const ConnectPortal: React.FC<ConnectPortalProps> = ({
       setError('Please enter your Deriv API token.');
       return;
     }
+    if (!Number.isInteger(appId) || appId <= 0) {
+      setError('Enter the App ID registered to your Deriv application.');
+      return;
+    }
     setError(null);
     setLoading(true);
 
     try {
-      derivService.setToken(token, derivService.getAppId());
-      const acc = await derivService.connect(token);
+      derivService.setToken(token, appId);
+      const acc = await derivService.connect(token, appId, optionsAccountType);
       setLoading(false);
       if (acc.isConnected) {
         onSuccess(acc);
@@ -137,7 +145,7 @@ export const ConnectPortal: React.FC<ConnectPortalProps> = ({
               : 'text-slate-500 hover:text-slate-800'
           }`}
         >
-          Deriv API
+          Deriv PAT
         </button>
 
         <button
@@ -264,18 +272,45 @@ export const ConnectPortal: React.FC<ConnectPortalProps> = ({
       {/* Token Form */}
       {activeMode === 'token' && (
         <form onSubmit={handleConnectToken} className="space-y-3">
+          <div className="grid grid-cols-2 gap-1 rounded-xl bg-[#f4f5f7] p-1">
+            {(['demo', 'real'] as const).map((type) => (
+              <button
+                key={type}
+                type="button"
+                onClick={() => setOptionsAccountType(type)}
+                className={`py-2 rounded-lg text-xs font-bold capitalize ${
+                  optionsAccountType === type
+                    ? type === 'real' ? 'bg-rose-600 text-white' : 'bg-emerald-600 text-white'
+                    : 'text-slate-500'
+                }`}
+              >
+                {type} Options account
+              </button>
+            ))}
+          </div>
+          <div>
+            <label className="text-[11px] font-semibold text-slate-600 block mb-1">Registered Deriv App ID</label>
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={appId || ''}
+              onChange={(event) => setAppId(parseInt(event.target.value, 10) || 0)}
+              className="w-full px-4 py-2.5 rounded-2xl bg-[#f4f5f7] border-0 text-xs font-mono text-slate-900 focus:ring-2 focus:ring-slate-900"
+            />
+          </div>
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="text-[11px] font-semibold text-slate-600">
-                Deriv API Token
+                Deriv Personal Access Token
               </label>
               <a
-                href="https://app.deriv.com/account/api-token"
+                href="https://developers.deriv.com/docs/intro/authentication/"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-[10px] font-semibold text-slate-500 hover:text-slate-900 flex items-center gap-1 hover:underline"
               >
-                <span>Get Token</span>
+                <span>Token setup docs</span>
                 <ExternalLink className="w-3 h-3" />
               </a>
             </div>
@@ -296,7 +331,7 @@ export const ConnectPortal: React.FC<ConnectPortalProps> = ({
               </button>
             </div>
             <p className="text-[10px] text-slate-400 mt-1">
-              Token requires <strong>Read</strong> and <strong>Trade</strong> scopes.
+              Requires trade access and your registered App ID.
             </p>
           </div>
 

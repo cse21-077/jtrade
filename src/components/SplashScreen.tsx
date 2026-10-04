@@ -21,6 +21,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
   // Token fields
   const [token, setToken] = useState('');
   const [appId, setAppId] = useState<number>(derivService.getAppId());
+  const [optionsAccountType, setOptionsAccountType] = useState<'demo' | 'real'>('demo');
   const [showPassword, setShowPassword] = useState(false);
 
   const [loading, setLoading] = useState(false);
@@ -47,7 +48,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
           return;
         }
         derivService.setToken(token, appId);
-        const acc = await derivService.connect(token, appId);
+        const acc = await derivService.connect(token, appId, optionsAccountType);
         setLoading(false);
 
         if (acc.isConnected && acc.loginId) {
@@ -59,7 +60,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
         } else {
           setError(
             derivService.getLastError() ||
-              'Deriv Token failed authorization. Verify that Read and Trade are checked in Deriv.'
+              'The token was not authorized for the selected Options account. Check the token’s trade scope, App ID, and account access.'
           );
         }
       } else if (selectedMode === 'mt5') {
@@ -185,15 +186,15 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
             <div>
               <div className="flex items-center justify-between mb-1">
                 <label className="text-[10px] font-semibold text-neutral-400">
-                  Deriv API Token
+                  Deriv Personal Access Token
                 </label>
                 <a
-                  href="https://app.deriv.com/account/api-token"
+                  href="https://developers.deriv.com/docs/intro/authentication/"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-[10px] text-sky-400 hover:underline"
                 >
-                  Create Token on Deriv →
+                  Token setup docs →
                 </a>
               </div>
               <div className="relative">
@@ -213,9 +214,27 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
                   {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                 </button>
               </div>
-              <p className="text-[10px] text-neutral-400 mt-1">Requires Read & Trade permissions</p>
+              <p className="text-[10px] text-neutral-400 mt-1">Requires trade access and your registered App ID</p>
 
               <div className="mt-3 pt-2.5 border-t border-neutral-800">
+                <span className="text-[10px] text-neutral-400 font-semibold block mb-1">Options Account</span>
+                <div className="grid grid-cols-2 gap-1 mb-2">
+                  {(['demo', 'real'] as const).map((type) => (
+                    <button
+                      key={type}
+                      type="button"
+                      disabled={loading || connectionSuccess}
+                      onClick={() => setOptionsAccountType(type)}
+                      className={`py-2 rounded-lg text-xs font-bold capitalize transition ${
+                        optionsAccountType === type
+                          ? type === 'real' ? 'bg-rose-600 text-white' : 'bg-emerald-600 text-white'
+                          : 'bg-[#27272a] text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      {type}
+                    </button>
+                  ))}
+                </div>
                 <label htmlFor="deriv-app-id" className="text-[10px] text-neutral-400 font-semibold block mb-1">
                   Registered Deriv App ID
                 </label>

@@ -3,22 +3,14 @@ import { DerivAccount } from '../types/trading';
 type TickCallback = (symbol: string, quote: number, epoch: number) => void;
 type StatusCallback = (connected: boolean, message?: string) => void;
 
-// Deriv Global WebSocket Server Endpoints with Automatic Failover
-const DERIV_WS_ENDPOINTS = [
-  'wss://ws.derivws.com/websockets/v3',
-  'wss://ws.binaryws.com/websockets/v3',
-  'wss://blue.derivws.com/websockets/v3',
-  'wss://green.derivws.com/websockets/v3',
-];
+const DERIV_API_BASE_URL = 'https://api.derivws.com';
+const DERIV_PUBLIC_WS_URL = 'wss://api.derivws.com/trading/v1/options/ws/public';
 
 export class DerivService {
   private ws: WebSocket | null = null;
-  // Default to 16929 (Official Deriv Production App ID) to avoid Cloudflare 520 on legacy 1089
+  // The user should replace this with the App ID registered for their application.
   private currentAppId: number = 16929;
   private token: string | null = null;
-  private currentEndpointIndex: number = 0;
-  private reconnectAttempts: number = 0;
-  private maxReconnectAttempts: number = DERIV_WS_ENDPOINTS.length - 1;
   private tickSubscribers: Map<string, Set<TickCallback>> = new Map();
   private statusSubscribers: Set<StatusCallback> = new Set();
   private activeSubscriptions: Set<string> = new Set();
@@ -148,7 +140,11 @@ export class DerivService {
     return Promise.resolve(this.accountInfo);
   }
 
-  public connect(customToken?: string, appId?: number): Promise<DerivAccount> {
+  public async connect(
+    customToken?: string,
+    appId?: number,
+    accountType: 'demo' | 'real' = 'demo'
+  ): Promise<DerivAccount> {
     if (customToken) {
       this.token = customToken.trim();
     }
@@ -156,154 +152,150 @@ export class DerivService {
       this.currentAppId = appId;
     }
 
-    this.currentEndpointIndex = 0;
-
-    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+    if (this.ws && this.ws.readyState !== WebSocket.CLOSED) {
+      this.ws.onclose = null;
+      this.ws.onerror = null;
       this.ws.close();
     }
+    if (this.pingInterval) clearInterval(this.pingInterval);
 
     this.isConnecting = true;
-    this.reconnectAttempts = 0;
-    return this.initWebSocket();
+    if (this.token) {
+      try {
+        return await this.connectOptionsAccount(accountType);
+      } catch (error) {
+        this.isConnecting = false;
+        this.accountInfo.isConnected = false;
+        this.notifyStatus(false, error instanceof Error ? error.message : 'Deriv connection failed.');
+        throw error;
+      }
+    }
+
+    this.accountInfo = {
+      ...this.accountInfo,
+      isConnected: false,
+      isDemo: true,
+      connectionType: 'demo',
+      appId: this.currentAppId,
+      loginId: 'Public Feed',
+      balance: 0,
+      currency: 'USD',
+    };
+    await this.openWebSocket(DERIV_PUBLIC_WS_URL);
+    this.accountInfo.isConnected = true;
+    this.notifyStatus(true, 'Connected to Deriv public market data.');
+    return { ...this.accountInfo };
   }
 
-  private initWebSocket(): Promise<DerivAccount> {
-    const startTime = Date.now();
-    const endpoint = DERIV_WS_ENDPOINTS[this.currentEndpointIndex % DERIV_WS_ENDPOINTS.length];
-    const wsUrl = `${endpoint}?app_id=${this.currentAppId}`;
+  private async connectOptionsAccount(accountType: 'demo' | 'real'): Promise<DerivAccount> {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${this.token}`,
+      'Deriv-App-ID': String(this.currentAppId),
+    };
+    const accountsResponse = await fetch(`${DERIV_API_BASE_URL}/trading/v1/options/accounts`, { headers });
+    const accountsPayload = await accountsResponse.json();
+    if (!accountsResponse.ok) {
+      throw new Error(accountsPayload.errors?.[0]?.message || `Deriv account lookup failed (${accountsResponse.status}).`);
+    }
 
+    const accounts = accountsPayload.data as Array<{
+      account_id: string;
+      balance: number;
+      currency: string;
+      status: 'active' | 'inactive';
+      account_type: 'demo' | 'real';
+    }>;
+    const account = accounts?.find((item) => item.account_type === accountType && item.status === 'active');
+    if (!account) {
+      throw new Error(`No active ${accountType} Options account was found for this Deriv token.`);
+    }
+
+    const otpResponse = await fetch(
+      `${DERIV_API_BASE_URL}/trading/v1/options/accounts/${encodeURIComponent(account.account_id)}/otp`,
+      { method: 'POST', headers }
+    );
+    const otpPayload = await otpResponse.json();
+    if (!otpResponse.ok || !otpPayload.data?.url) {
+      throw new Error(otpPayload.errors?.[0]?.message || `Could not prepare an account WebSocket (${otpResponse.status}).`);
+    }
+
+    this.accountInfo = {
+      isConnected: false,
+      isDemo: account.account_type === 'demo',
+      connectionType: 'token',
+      token: this.token || undefined,
+      appId: this.currentAppId,
+      loginId: account.account_id,
+      balance: account.balance,
+      currency: account.currency,
+      fullName: account.account_id,
+    };
+    await this.openWebSocket(otpPayload.data.url);
+    this.accountInfo.isConnected = true;
+    this.notifyStatus(true, `Connected to ${account.account_type} Options account ${account.account_id}.`);
+    return { ...this.accountInfo };
+  }
+
+  private openWebSocket(url: string): Promise<void> {
+    const startedAt = Date.now();
     return new Promise((resolve, reject) => {
-      let opened = false;
-      let isRetrying = false;
-
-      const triggerFailover = () => {
-        if (opened || isRetrying) return;
-        isRetrying = true;
-
-        if (this.reconnectAttempts < this.maxReconnectAttempts) {
-          this.reconnectAttempts++;
-          this.currentEndpointIndex = (this.currentEndpointIndex + 1) % DERIV_WS_ENDPOINTS.length;
-
-          const nextServer = DERIV_WS_ENDPOINTS[this.currentEndpointIndex];
-          console.log(`Rotating to alternate Deriv server: ${nextServer} with App ID ${this.currentAppId}`);
-          setTimeout(() => {
-            this.initWebSocket().then(resolve).catch(reject);
-          }, 600);
-        } else {
-          this.accountInfo.isConnected = false;
-          this.isConnecting = false;
-          const message = `Could not connect to Deriv using App ID ${this.currentAppId}. Check that the App ID is registered to your Deriv app and that your network allows WebSocket connections.`;
-          this.notifyStatus(false, message);
-          reject(new Error(message));
-        }
-      };
-
       try {
-        console.log(`Connecting to Deriv WebSocket: ${wsUrl}`);
-        this.ws = new WebSocket(wsUrl);
+        console.info(`Connecting to Deriv API WebSocket: ${url.replace(/([?&]otp=)[^&]+/, '$1[redacted]')}`);
+        const socket = new WebSocket(url);
+        this.ws = socket;
+        const timeoutId = window.setTimeout(() => {
+          if (socket.readyState !== WebSocket.OPEN) {
+            socket.close();
+            reject(new Error('Deriv WebSocket connection timed out.'));
+          }
+        }, 15000);
 
-        this.ws.onopen = () => {
-          opened = true;
+        socket.onopen = () => {
+          clearTimeout(timeoutId);
           this.isConnecting = false;
-          this.reconnectAttempts = 0;
-          this.accountInfo.latencyMs = Date.now() - startTime;
-
-          // Heartbeat ping every 25s
+          this.accountInfo.latencyMs = Date.now() - startedAt;
           if (this.pingInterval) clearInterval(this.pingInterval);
           this.pingInterval = window.setInterval(() => {
-            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-              this.ws.send(JSON.stringify({ ping: 1 }));
-            }
+            if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ ping: 1 }));
           }, 25000);
-
-          // Authenticate if token provided
-          if (this.token) {
-            this.send({ authorize: this.token });
-          } else {
-            this.accountInfo.isConnected = true;
-            this.notifyStatus(true, `Connected to Deriv Feed (${endpoint.split('//')[1].split('/')[0]})`);
-            resolve(this.accountInfo);
-          }
-
-          // Resubscribe to live ticks
-          this.tickSubscribers.forEach((_, symbol) => {
-            this.requestTicks(symbol);
-          });
+          this.tickSubscribers.forEach((_, symbol) => this.requestTicks(symbol));
+          if (this.token) this.send({ balance: 1, subscribe: 1 });
+          resolve();
         };
 
-        this.ws.onmessage = (event) => {
+        socket.onmessage = (event) => {
           try {
-            const data = JSON.parse(event.data);
-            this.handleMessage(data, resolve, reject);
-          } catch (e) {
-            console.error('Deriv parse error', e);
+            this.handleMessage(JSON.parse(event.data));
+          } catch (error) {
+            console.error('Deriv API message parse error', error);
           }
         };
 
-        this.ws.onerror = (err) => {
-          console.warn(`Deriv WS error on ${endpoint} (App ID: ${this.currentAppId}):`, err);
-          triggerFailover();
+        socket.onerror = () => {
+          clearTimeout(timeoutId);
+          socket.close();
+          if (this.isConnecting) reject(new Error('Deriv API WebSocket handshake failed. Check the app ID, account access, and network connection.'));
         };
 
-        this.ws.onclose = (event) => {
-          console.warn(`Deriv WS closed on ${endpoint} (App ID: ${this.currentAppId}, code: ${event.code}, reason: ${event.reason || 'none'})`);
-          if (!opened) {
-            triggerFailover();
+        socket.onclose = (event) => {
+          clearTimeout(timeoutId);
+          if (this.isConnecting) {
+            reject(new Error(`Deriv API WebSocket closed before connecting (code ${event.code}).`));
           } else {
             this.accountInfo.isConnected = false;
-            this.notifyStatus(false, 'Connection closed');
-            if (this.pingInterval) clearInterval(this.pingInterval);
+            this.notifyStatus(false, `Deriv WebSocket disconnected (code ${event.code}).`);
           }
+          this.isConnecting = false;
+          if (this.pingInterval) clearInterval(this.pingInterval);
         };
-      } catch (err) {
-        console.error('WS init exception:', err);
-        triggerFailover();
+      } catch (error) {
+        reject(error);
       }
     });
   }
 
-  private handleMessage(
-    data: any,
-    authResolve?: (acc: DerivAccount) => void,
-    authReject?: (err: any) => void
-  ) {
-    // 1. Authorize response
-    if (data.msg_type === 'authorize') {
-      if (data.error) {
-        const errorMsg = data.error.message || 'Deriv token authorization failed';
-        console.warn('Deriv Auth error:', errorMsg);
-        this.accountInfo.isConnected = false;
-        this.lastTradeError = errorMsg;
-        this.notifyStatus(false, errorMsg);
-        if (authReject) authReject(new Error(errorMsg));
-      } else {
-        const auth = data.authorize;
-        this.accountInfo = {
-          isConnected: true,
-          isDemo: auth.is_virtual === 1,
-          connectionType: 'token',
-          token: this.token || undefined,
-          appId: this.currentAppId,
-          loginId: auth.loginid,
-          email: auth.email,
-          balance: parseFloat(auth.balance) || 0,
-          currency: auth.currency || 'USD',
-          fullName: auth.fullname || auth.email || auth.loginid,
-          latencyMs: this.accountInfo.latencyMs,
-        };
-        this.lastTradeError = null;
-        this.notifyStatus(
-          true,
-          `Connected: ${auth.loginid} (${auth.currency} ${parseFloat(auth.balance).toFixed(2)})`
-        );
-        if (authResolve) authResolve(this.accountInfo);
-
-        // Subscribe to real-time balance updates
-        this.send({ balance: 1, subscribe: 1 });
-      }
-    }
-
-    // 2. Real-time balance subscription
+  private handleMessage(data: any) {
+    // Real-time balance subscription
     if (data.msg_type === 'balance' && data.balance) {
       this.accountInfo.balance = parseFloat(data.balance.balance) || this.accountInfo.balance;
       this.accountInfo.currency = data.balance.currency || this.accountInfo.currency;
@@ -472,7 +464,7 @@ export class DerivService {
         currency: this.accountInfo.currency || 'USD',
         duration: 15,
         duration_unit: 'm',
-        symbol: params.symbol,
+        underlying_symbol: params.symbol,
         req_id: proposalReqId,
       });
 
@@ -522,7 +514,7 @@ export class DerivService {
       const onMsg = (event: MessageEvent) => {
         try {
           const data = JSON.parse(event.data);
-          if (data.req_id === reqId || data.msg_type === 'sell') {
+          if (data.req_id === reqId) {
             if (data.error) {
               cleanup();
               resolve({ success: false, message: data.error.message || 'Sell failed' });

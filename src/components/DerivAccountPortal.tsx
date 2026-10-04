@@ -29,7 +29,7 @@ export const DerivAccountPortal: React.FC<DerivAccountPortalProps> = ({
 }) => {
   const [token, setToken] = useState(currentAccount.token || '');
   const [showToken, setShowToken] = useState(false);
-  const [appId, setAppId] = useState(currentAccount.appId || 1089);
+  const [appId, setAppId] = useState(currentAccount.appId || derivService.getAppId());
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [autoRedirect, setAutoRedirect] = useState(true);
@@ -41,7 +41,7 @@ export const DerivAccountPortal: React.FC<DerivAccountPortalProps> = ({
 
     try {
       derivService.setToken(token, appId);
-      const acc = await derivService.connect(token, appId);
+      const acc = await derivService.connect(token, appId, currentAccount.isDemo ? 'demo' : 'real');
 
       setIsSubmitting(false);
       if (acc.isConnected) {
