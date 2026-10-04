@@ -83,36 +83,30 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   const accountId = account.loginId || account.mt5Login || 'Demo-Account';
 
   return (
-    <div className="pb-28 pt-3 px-4 sm:px-5 max-w-[400px] mx-auto space-y-5 font-sans select-none bg-white min-h-screen">
-      <div className="flex justify-center py-2">
-        <MascotHead status="success" size={140} />
-      </div>
-
-      <div className="bg-[#18181b] rounded-2xl p-4 text-white space-y-4">
-        <div className="flex items-start justify-between">
-          <div className="space-y-0.5">
-            <span className="text-[10px] font-mono tracking-wider uppercase text-neutral-400">
-              Active Deriv Account
-            </span>
-            <div className="text-lg font-black tracking-tight font-mono text-white flex items-center gap-2">
-              <span>{accountId}</span>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-sans font-bold">
-                {account.currency || 'USD'} {account.balance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-              </span>
-            </div>
-          </div>
-
+    <div className="min-h-[calc(100dvh-1rem)] flex items-center justify-center px-4 pt-4 pb-24 font-sans select-none bg-white">
+      <div className="w-full max-w-[400px] space-y-5">
+        <div className="flex justify-center">
+          <MascotHead status="success" size={140} />
         </div>
 
-        <button
-          type="button"
-          disabled={isExecutingTest}
-          onClick={handleTestMarketTrade}
-          className="w-full py-3 rounded-xl bg-white hover:bg-neutral-100 text-slate-900 font-extrabold text-xs flex items-center justify-center gap-2 transition disabled:opacity-50"
-        >
-          {isExecutingTest ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4 text-amber-500" />}
-          <span>{isExecutingTest ? 'Testing market...' : `Test market buy · ${selectedSymbol.displayName.split(' ')[0]}`}</span>
-        </button>
+        <div className="bg-[#18181b] rounded-2xl p-5 text-white space-y-4 text-center">
+          <div className="space-y-1">
+            <h1 className="text-lg font-black tracking-tight font-mono text-white break-words">{accountId}</h1>
+            <p className="text-sm font-mono text-neutral-300">
+              {account.currency || 'USD'} {account.balance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            disabled={isExecutingTest}
+            onClick={handleTestMarketTrade}
+            className="w-full py-3 rounded-xl bg-white hover:bg-neutral-100 text-slate-900 font-extrabold text-xs flex items-center justify-center gap-2 transition disabled:opacity-50"
+          >
+            {isExecutingTest ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4 text-amber-500" />}
+            <span>{isExecutingTest ? 'Testing market...' : `Test market buy · ${selectedSymbol.displayName.split(' ')[0]}`}</span>
+          </button>
+        </div>
       </div>
     </div>
   );

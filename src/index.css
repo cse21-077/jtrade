@@ -1,1 +1,69 @@
 @import "tailwindcss";
+
+@keyframes profile-chart-draw {
+	to {
+		stroke-dashoffset: 0;
+	}
+}
+
+@keyframes profile-chart-glow {
+	0%,
+	100% {
+		opacity: 0.92;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+
+@keyframes profile-chart-fill-in {
+	to {
+		opacity: 1;
+	}
+}
+
+@keyframes profile-chart-marker-pulse {
+	0%,
+	100% {
+		transform: scale(0.8);
+		opacity: 0.8;
+	}
+	50% {
+		transform: scale(1.25);
+		opacity: 1;
+	}
+}
+
+.profile-chart-line {
+	stroke-dasharray: 1;
+	stroke-dashoffset: 1;
+	animation: profile-chart-draw 1.8s cubic-bezier(0.22, 1, 0.36, 1) forwards,
+		profile-chart-glow 3.6s ease-in-out 1.8s infinite;
+}
+
+.profile-chart-area {
+	opacity: 0;
+	animation: profile-chart-fill-in 1.2s ease-out 0.6s forwards;
+}
+
+.profile-chart-marker {
+	transform-box: fill-box;
+	transform-origin: center;
+	animation: profile-chart-marker-pulse 2.2s ease-in-out 1.8s infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.profile-chart-line,
+	.profile-chart-area,
+	.profile-chart-marker {
+		animation: none;
+	}
+
+	.profile-chart-line {
+		stroke-dashoffset: 0;
+	}
+
+	.profile-chart-area {
+		opacity: 1;
+	}
+}
