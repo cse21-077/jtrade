@@ -8,8 +8,7 @@ const DERIV_PUBLIC_WS_URL = 'wss://api.derivws.com/trading/v1/options/ws/public'
 
 export class DerivService {
   private ws: WebSocket | null = null;
-  // The user should replace this with the App ID registered for their application.
-  private currentAppId: number = 16929;
+  private currentAppId: number = 0;
   private token: string | null = null;
   private tickSubscribers: Map<string, Set<TickCallback>> = new Map();
   private statusSubscribers: Set<StatusCallback> = new Set();
@@ -21,7 +20,7 @@ export class DerivService {
   private accountInfo: DerivAccount = {
     isConnected: false,
     isDemo: false,
-    appId: 16929,
+    appId: 0,
     balance: 0.0,
     currency: 'USD',
     loginId: '',
@@ -40,11 +39,15 @@ export class DerivService {
     try {
       const savedToken = localStorage.getItem('deriv_token');
       const savedAppId = localStorage.getItem('deriv_app_id');
+      const appIdWasEntered = localStorage.getItem('deriv_app_id_registered') === 'true';
       if (savedToken) {
         this.token = savedToken;
       }
-      if (savedAppId) {
-        this.currentAppId = parseInt(savedAppId, 10) || 16929;
+      if (savedAppId && appIdWasEntered) {
+        const parsedAppId = parseInt(savedAppId, 10);
+        if (Number.isInteger(parsedAppId) && parsedAppId > 0) {
+          this.currentAppId = parsedAppId;
+        }
       }
     } catch {
       // LocalStorage unavailable
@@ -67,12 +70,13 @@ export class DerivService {
     return this.lastTradeError;
   }
 
-  public setToken(token: string, appId: number = 16929) {
+  public setToken(token: string, appId: number) {
     this.token = token.trim();
     this.currentAppId = appId;
     try {
       localStorage.setItem('deriv_token', this.token);
       localStorage.setItem('deriv_app_id', String(appId));
+      localStorage.setItem('deriv_app_id_registered', 'true');
     } catch {
       // ignore
     }
@@ -88,7 +92,7 @@ export class DerivService {
     this.accountInfo = {
       isConnected: false,
       isDemo: false,
-      appId: 16929,
+      appId: this.currentAppId,
       balance: 0.0,
       currency: 'USD',
       loginId: '',
@@ -152,6 +156,10 @@ export class DerivService {
       this.currentAppId = appId;
     }
 
+    if (this.token && (!Number.isInteger(this.currentAppId) || this.currentAppId <= 0)) {
+      throw new Error('Enter the App ID registered to your Deriv application.');
+    }
+
     if (this.ws && this.ws.readyState !== WebSocket.CLOSED) {
       this.ws.onclose = null;
       this.ws.onerror = null;
@@ -195,7 +203,11 @@ export class DerivService {
     const accountsResponse = await fetch(`${DERIV_API_BASE_URL}/trading/v1/options/accounts`, { headers });
     const accountsPayload = await accountsResponse.json();
     if (!accountsResponse.ok) {
-      throw new Error(accountsPayload.errors?.[0]?.message || `Deriv account lookup failed (${accountsResponse.status}).`);
+      const detail = accountsPayload.errors?.[0]?.message || 'Authentication was rejected.';
+      const authHint = accountsResponse.status === 401
+        ? ' Verify this is a current PAT with trade access and that the App ID belongs to the same registered Deriv application.'
+        : '';
+      throw new Error(`Deriv account lookup failed (${accountsResponse.status}): ${detail}${authHint}`);
     }
 
     const accounts = accountsPayload.data as Array<{
@@ -216,7 +228,11 @@ export class DerivService {
     );
     const otpPayload = await otpResponse.json();
     if (!otpResponse.ok || !otpPayload.data?.url) {
-      throw new Error(otpPayload.errors?.[0]?.message || `Could not prepare an account WebSocket (${otpResponse.status}).`);
+      const detail = otpPayload.errors?.[0]?.message || 'Deriv did not return a WebSocket URL.';
+      const authHint = otpResponse.status === 401
+        ? ' Verify the PAT, trade access, and registered App ID.'
+        : '';
+      throw new Error(`Could not prepare an account WebSocket (${otpResponse.status}): ${detail}${authHint}`);
     }
 
     this.accountInfo = {
