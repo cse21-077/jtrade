@@ -8,7 +8,7 @@ import { ProfileScreen } from './components/ProfileScreen';
 import { BottomNavBar, AppTab } from './components/BottomNavBar';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { derivService } from './services/derivWs';
-import { DerivAccount, ConnectionMode, MarketSymbol, PlacedOrder, TradeNotice } from './types/trading';
+import { DerivAccount, MarketSymbol, PlacedOrder, TradeNotice } from './types/trading';
 import { CheckCircle2, CircleAlert, X } from 'lucide-react';
 
 const SYMBOLS: MarketSymbol[] = [
@@ -76,7 +76,6 @@ export default function App() {
     return checkIsStandalone();
   });
   const [showSplash, setShowSplash] = useState(true);
-  const [selectedInitialMode, setSelectedInitialMode] = useState<ConnectionMode>('mt5');
   const [showConnectModal, setShowConnectModal] = useState(false);
   const [activeTab, setActiveTab] = useState<AppTab>('home');
 
@@ -218,12 +217,6 @@ export default function App() {
     setActiveTab('home');
   };
 
-  const handleConnectSuccess = (acc: DerivAccount) => {
-    setAccount(acc);
-    setShowConnectModal(false);
-    setActiveTab('home');
-  };
-
   const handleDeployOrders = (newOrders: PlacedOrder[]) => {
     setOrders((prev) => [...newOrders, ...prev]);
     setActiveTab('orders');
@@ -324,13 +317,11 @@ export default function App() {
             pendingCount={pendingCount}
           />
 
-          {/* Connect Modal (Deriv MT5 Login / Deriv API Token / Sandbox) */}
+          {/* OAuth account switch modal */}
           {showConnectModal && (
             <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-2xs p-4 animate-in fade-in duration-150">
               <ConnectPortal
-                initialMode={selectedInitialMode}
                 currentAccount={account}
-                onSuccess={handleConnectSuccess}
                 onCancel={() => setShowConnectModal(false)}
               />
             </div>

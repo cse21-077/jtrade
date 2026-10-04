@@ -3,19 +3,15 @@ import { DerivAccount } from '../types/trading';
 type TickCallback = (symbol: string, quote: number, epoch: number) => void;
 type StatusCallback = (connected: boolean, message?: string) => void;
 
-const DERIV_API_BASE_URL = 'https://api.derivws.com';
 const DERIV_PUBLIC_WS_URL = 'wss://api.derivws.com/trading/v1/options/ws/public';
 
 export class DerivService {
   private ws: WebSocket | null = null;
-  private currentAppId: number = 0;
-  private token: string | null = null;
   private tickSubscribers: Map<string, Set<TickCallback>> = new Map();
   private statusSubscribers: Set<StatusCallback> = new Set();
   private activeSubscriptions: Set<string> = new Set();
   private pingInterval: number | null = null;
   private isConnecting: boolean = false;
-  private lastTradeError: string | null = null;
 
   private accountInfo: DerivAccount = {
     isConnected: false,
@@ -37,18 +33,9 @@ export class DerivService {
 
   constructor() {
     try {
-      const savedToken = localStorage.getItem('deriv_token');
-      const savedAppId = localStorage.getItem('deriv_app_id');
-      const appIdWasEntered = localStorage.getItem('deriv_app_id_registered') === 'true';
-      if (savedToken) {
-        this.token = savedToken;
-      }
-      if (savedAppId && appIdWasEntered) {
-        const parsedAppId = parseInt(savedAppId, 10);
-        if (Number.isInteger(parsedAppId) && parsedAppId > 0) {
-          this.currentAppId = parsedAppId;
-        }
-      }
+      localStorage.removeItem('deriv_token');
+      localStorage.removeItem('deriv_app_id');
+      localStorage.removeItem('deriv_app_id_registered');
     } catch {
       // LocalStorage unavailable
     }
@@ -58,47 +45,66 @@ export class DerivService {
     return { ...this.accountInfo };
   }
 
-  public getAppId(): number {
-    return this.currentAppId;
-  }
-
-  public hasRealToken(): boolean {
-    return !!this.token && this.token.length > 5;
-  }
-
-  public getLastError(): string | null {
-    return this.lastTradeError;
-  }
-
-  public setToken(token: string, appId: number) {
-    this.token = token.trim();
-    this.currentAppId = appId;
-    try {
-      localStorage.setItem('deriv_token', this.token);
-      localStorage.setItem('deriv_app_id', String(appId));
-      localStorage.setItem('deriv_app_id_registered', 'true');
-    } catch {
-      // ignore
-    }
-  }
-
   public clearToken() {
-    this.token = null;
+    void fetch('/api/oauth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => undefined);
     try {
       localStorage.removeItem('deriv_token');
+      localStorage.removeItem('deriv_app_id');
     } catch {
       // ignore
     }
     this.accountInfo = {
       isConnected: false,
       isDemo: false,
-      appId: this.currentAppId,
+      appId: 0,
       balance: 0.0,
       currency: 'USD',
       loginId: '',
       fullName: '',
     };
     this.notifyStatus(false, 'Disconnected');
+  }
+
+  public async connectOAuthAccount(accountType: 'demo' | 'real'): Promise<DerivAccount> {
+    if (this.ws && this.ws.readyState !== WebSocket.CLOSED) {
+      this.ws.onclose = null;
+      this.ws.onerror = null;
+      this.ws.close();
+    }
+    if (this.pingInterval) clearInterval(this.pingInterval);
+    this.isConnecting = true;
+
+    try {
+      const response = await fetch('/api/deriv/connect', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountType }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || `Deriv account connection failed (${response.status}).`);
+
+      this.accountInfo = {
+        isConnected: false,
+        isDemo: payload.account.accountType === 'demo',
+        connectionType: 'token',
+        appId: 0,
+        loginId: payload.account.accountId,
+        balance: Number(payload.account.balance) || 0,
+        currency: payload.account.currency || 'USD',
+        fullName: payload.account.accountId,
+      };
+      await this.openWebSocket(payload.url);
+      this.accountInfo.isConnected = true;
+      this.notifyStatus(true, `Connected to ${accountType} Options account ${payload.account.accountId}.`);
+      return { ...this.accountInfo };
+    } catch (error) {
+      this.isConnecting = false;
+      this.accountInfo.isConnected = false;
+      const message = error instanceof Error ? error.message : 'Deriv connection failed.';
+      this.notifyStatus(false, message);
+      throw error;
+    }
   }
 
   public onStatusChange(cb: StatusCallback): () => void {
@@ -111,55 +117,7 @@ export class DerivService {
     this.statusSubscribers.forEach((cb) => cb(connected, message));
   }
 
-  public connectMT5(params: {
-    server: string;
-    login: string;
-    password?: string;
-    isDemo: boolean;
-  }): Promise<DerivAccount> {
-    this.accountInfo = {
-      isConnected: true,
-      isDemo: params.isDemo,
-      connectionType: 'mt5',
-      appId: this.currentAppId,
-      loginId: params.login,
-      mt5Login: params.login,
-      mt5Server: params.server,
-      fullName: `MT5 Account ${params.login}`,
-      balance: 5000.0,
-      currency: 'USD',
-      latencyMs: 18,
-    };
-
-    try {
-      localStorage.setItem('deriv_mt5_server', params.server);
-      localStorage.setItem('deriv_mt5_login', params.login);
-      localStorage.setItem('deriv_connection_type', 'mt5');
-    } catch {
-      // ignore
-    }
-
-    this.connect();
-    this.notifyStatus(true, `Connected to MT5 (${params.server}: ${params.login})`);
-    return Promise.resolve(this.accountInfo);
-  }
-
-  public async connect(
-    customToken?: string,
-    appId?: number,
-    accountType: 'demo' | 'real' = 'demo'
-  ): Promise<DerivAccount> {
-    if (customToken) {
-      this.token = customToken.trim();
-    }
-    if (appId) {
-      this.currentAppId = appId;
-    }
-
-    if (this.token && (!Number.isInteger(this.currentAppId) || this.currentAppId <= 0)) {
-      throw new Error('Enter the App ID registered to your Deriv application.');
-    }
-
+  public async connect(): Promise<DerivAccount> {
     if (this.ws && this.ws.readyState !== WebSocket.CLOSED) {
       this.ws.onclose = null;
       this.ws.onerror = null;
@@ -168,23 +126,12 @@ export class DerivService {
     if (this.pingInterval) clearInterval(this.pingInterval);
 
     this.isConnecting = true;
-    if (this.token) {
-      try {
-        return await this.connectOptionsAccount(accountType);
-      } catch (error) {
-        this.isConnecting = false;
-        this.accountInfo.isConnected = false;
-        this.notifyStatus(false, error instanceof Error ? error.message : 'Deriv connection failed.');
-        throw error;
-      }
-    }
-
     this.accountInfo = {
       ...this.accountInfo,
       isConnected: false,
       isDemo: true,
       connectionType: 'demo',
-      appId: this.currentAppId,
+      appId: 0,
       loginId: 'Public Feed',
       balance: 0,
       currency: 'USD',
@@ -192,63 +139,6 @@ export class DerivService {
     await this.openWebSocket(DERIV_PUBLIC_WS_URL);
     this.accountInfo.isConnected = true;
     this.notifyStatus(true, 'Connected to Deriv public market data.');
-    return { ...this.accountInfo };
-  }
-
-  private async connectOptionsAccount(accountType: 'demo' | 'real'): Promise<DerivAccount> {
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${this.token}`,
-      'Deriv-App-ID': String(this.currentAppId),
-    };
-    const accountsResponse = await fetch(`${DERIV_API_BASE_URL}/trading/v1/options/accounts`, { headers });
-    const accountsPayload = await accountsResponse.json();
-    if (!accountsResponse.ok) {
-      const detail = accountsPayload.errors?.[0]?.message || 'Authentication was rejected.';
-      const authHint = accountsResponse.status === 401
-        ? ' Verify this is a current PAT with trade access and that the App ID belongs to the same registered Deriv application.'
-        : '';
-      throw new Error(`Deriv account lookup failed (${accountsResponse.status}): ${detail}${authHint}`);
-    }
-
-    const accounts = accountsPayload.data as Array<{
-      account_id: string;
-      balance: number;
-      currency: string;
-      status: 'active' | 'inactive';
-      account_type: 'demo' | 'real';
-    }>;
-    const account = accounts?.find((item) => item.account_type === accountType && item.status === 'active');
-    if (!account) {
-      throw new Error(`No active ${accountType} Options account was found for this Deriv token.`);
-    }
-
-    const otpResponse = await fetch(
-      `${DERIV_API_BASE_URL}/trading/v1/options/accounts/${encodeURIComponent(account.account_id)}/otp`,
-      { method: 'POST', headers }
-    );
-    const otpPayload = await otpResponse.json();
-    if (!otpResponse.ok || !otpPayload.data?.url) {
-      const detail = otpPayload.errors?.[0]?.message || 'Deriv did not return a WebSocket URL.';
-      const authHint = otpResponse.status === 401
-        ? ' Verify the PAT, trade access, and registered App ID.'
-        : '';
-      throw new Error(`Could not prepare an account WebSocket (${otpResponse.status}): ${detail}${authHint}`);
-    }
-
-    this.accountInfo = {
-      isConnected: false,
-      isDemo: account.account_type === 'demo',
-      connectionType: 'token',
-      token: this.token || undefined,
-      appId: this.currentAppId,
-      loginId: account.account_id,
-      balance: account.balance,
-      currency: account.currency,
-      fullName: account.account_id,
-    };
-    await this.openWebSocket(otpPayload.data.url);
-    this.accountInfo.isConnected = true;
-    this.notifyStatus(true, `Connected to ${account.account_type} Options account ${account.account_id}.`);
     return { ...this.accountInfo };
   }
 
@@ -275,7 +165,7 @@ export class DerivService {
             if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ ping: 1 }));
           }, 25000);
           this.tickSubscribers.forEach((_, symbol) => this.requestTicks(symbol));
-          if (this.token) this.send({ balance: 1, subscribe: 1 });
+          if (this.accountInfo.connectionType === 'token') this.send({ balance: 1, subscribe: 1 });
           resolve();
         };
 
@@ -387,11 +277,11 @@ export class DerivService {
       };
     }
 
-    if (!this.token) {
+    if (this.accountInfo.connectionType !== 'token') {
       return {
         success: false,
         contractId: '',
-        message: 'No Deriv API token found. Please connect your token on the portal.',
+        message: 'Sign in to a Deriv trading account before placing trades.',
       };
     }
 
@@ -509,7 +399,7 @@ export class DerivService {
 
   // Real position close via Deriv WebSocket
   public async closeRealPosition(contractId: string): Promise<{ success: boolean; message: string }> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.token) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || this.accountInfo.connectionType !== 'token') {
       return { success: false, message: 'Not connected with Deriv token' };
     }
 
