@@ -100,10 +100,10 @@ export const PWAInstallGate: React.FC<PWAInstallGateProps> = ({ onCheckStatus })
         </span>
 
         <h1 className="text-2xl font-black text-slate-900 tracking-tight">
-          Install J-Grid to Trade
+          Install JoeMoney to Trade
         </h1>
         <p className="text-xs text-slate-500 mt-1.5 max-w-xs mx-auto leading-relaxed">
-          Access is locked in regular browsers. To trade on Deriv & MT5, install J-Grid and launch it from your home screen.
+          Access is locked in regular browsers. To trade on Deriv & MT5, install JoeMoney and launch it from your home screen.
         </p>
       </div>
 
@@ -202,7 +202,7 @@ export const PWAInstallGate: React.FC<PWAInstallGateProps> = ({ onCheckStatus })
                 <div>
                   <h4 className="text-xs font-bold text-slate-900">Launch from Home Screen</h4>
                   <p className="text-[11px] text-slate-500 mt-0.5">
-                    Close the browser and tap the <strong>J-Grid</strong> app icon to trade.
+                    Close the browser and tap the <strong>JoeMoney</strong> app icon to trade.
                   </p>
                 </div>
               </div>
@@ -254,7 +254,7 @@ export const PWAInstallGate: React.FC<PWAInstallGateProps> = ({ onCheckStatus })
                 J
               </div>
               <div>
-                <h4 className="text-xs font-bold text-slate-900">4. Open J-Grid from Home Screen</h4>
+                <h4 className="text-xs font-bold text-slate-900">4. Open JoeMoney from Home Screen</h4>
                 <p className="text-[11px] text-slate-500 mt-0.5">
                   Launch the installed app icon to unlock full access.
                 </p>

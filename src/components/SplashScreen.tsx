@@ -95,7 +95,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
         <div>
           <h1 className="text-base font-bold tracking-tight">Connect your Deriv account</h1>
           <p className="mt-1 text-[11px] text-neutral-400">
-            Sign in on Deriv and approve JTrade. Your password and access token stay with Deriv.
+            Sign in on Deriv and approve JoeMoney. Your password and access token stay with Deriv.
           </p>
         </div>
 
@@ -146,6 +146,13 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
             {!loading && <ArrowRight className="w-3.5 h-3.5" />}
           </button>
         )}
+        <a
+          href="/mt5-demo"
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-neutral-600 py-3 text-xs font-bold text-neutral-200 transition hover:bg-white/10"
+        >
+          <ArrowRight className="h-3.5 w-3.5" />
+          Open VPS MT5 demo tester
+        </a>
       </div>
     </div>
   );

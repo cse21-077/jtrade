@@ -1,6 +1,6 @@
 {
-  "name": "J-Grid Deriv Trader PWA",
-  "description": "Light-blue algorithmic order portal and ladder trading desk for Deriv with splash screen and multi-step buy/sell execution.",
+  "name": "JoeMoney Trading PWA",
+  "description": "Algorithmic order portal and ladder trading desk for Deriv with multi-step buy/sell execution.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

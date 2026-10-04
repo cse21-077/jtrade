@@ -390,7 +390,7 @@ export const OrdersPortal: React.FC<OrdersPortalProps> = ({ account, onDisconnec
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-sm font-extrabold text-slate-900 tracking-tight">
-                  J-GRID ORDERS PORTAL
+                  JOMEMONEY ORDERS PORTAL
                 </h1>
                 <span className="hidden sm:inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-100 text-sky-700 border border-sky-200">
                   Deriv Engine

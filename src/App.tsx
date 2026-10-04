@@ -7,6 +7,7 @@ import { OrdersScreen } from './components/OrdersScreen';
 import { ProfileScreen } from './components/ProfileScreen';
 import { BottomNavBar, AppTab } from './components/BottomNavBar';
 import { OfflineIndicator } from './components/OfflineIndicator';
+import { Mt5DemoScreen } from './components/Mt5DemoScreen';
 import { derivService } from './services/derivWs';
 import { DerivAccount, MarketSymbol, PlacedOrder, TradeNotice } from './types/trading';
 import { CheckCircle2, CircleAlert, X } from 'lucide-react';
@@ -96,6 +97,7 @@ export default function App() {
   const [orders, setOrders] = useState<PlacedOrder[]>([]);
   const [tradeNotice, setTradeNotice] = useState<TradeNotice | null>(null);
   const executingOrderIds = useRef(new Set<string>());
+  const isMt5DemoRoute = window.location.pathname === '/mt5-demo';
 
   // Listen to Deriv account status
   useEffect(() => {
@@ -230,6 +232,8 @@ export default function App() {
         <PWAInstallGate
           onCheckStatus={() => setIsStandalone(checkIsStandalone())}
         />
+      ) : isMt5DemoRoute ? (
+        <Mt5DemoScreen />
       ) : showSplash ? (
         <SplashScreen
           onConnected={handleSplashConnected}

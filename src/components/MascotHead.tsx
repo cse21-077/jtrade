@@ -23,7 +23,7 @@ export const MascotHead: React.FC<MascotHeadProps> = ({
     ? '#fda4af' // Rose tint on error
     : isConnecting
     ? '#fef08a' // Warm Yellow while handshaking
-    : '#fbcfe8'; // Classic J-Grid Pink
+    : '#fbcfe8'; // JoeMoney accent
 
   const glowFill = isSuccess
     ? '#bbf7d0' // Green aura
@@ -195,7 +195,7 @@ export const MascotHead: React.FC<MascotHeadProps> = ({
         ) : (
           <div className="space-y-0.5">
             <div className="text-xs font-extrabold text-slate-800 tracking-tight">
-              J-Grid Intelligent Assistant
+              JoeMoney Intelligent Assistant
             </div>
             <p className="text-[11px] text-slate-400">
               Ready to deploy automated buy & sell ladders

@@ -52,7 +52,7 @@ export const ActiveOrdersList: React.FC<ActiveOrdersListProps> = ({
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `j-grid-orders-${Date.now()}.csv`);
+    link.setAttribute('download', `joemoney-orders-${Date.now()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

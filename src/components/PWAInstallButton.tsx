@@ -17,7 +17,7 @@ export const PWAInstallButton: React.FC = () => {
       <button
         onClick={install}
         className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-sky-500 text-white shadow-sm hover:bg-sky-600 active:scale-95 transition-all"
-        title="Install J-Grid on your device"
+        title="Install JoeMoney on your device"
       >
         <Download className="w-3.5 h-3.5" />
         <span>Install PWA</span>
@@ -32,7 +32,7 @@ export const PWAInstallButton: React.FC = () => {
         <button
           onClick={() => setShowIOSGuide(true)}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 transition-all"
-          title="Install J-Grid on iPhone/iPad"
+          title="Install JoeMoney on iPhone/iPad"
         >
           <Smartphone className="w-3.5 h-3.5 text-sky-600" />
           <span>Add to Home Screen</span>
@@ -46,7 +46,7 @@ export const PWAInstallButton: React.FC = () => {
                   <div className="w-8 h-8 rounded-lg bg-sky-500 text-white flex items-center justify-center font-bold text-base shadow-sm">
                     J
                   </div>
-                  <h3 className="text-base font-bold text-slate-800">Install J-Grid on iOS</h3>
+                  <h3 className="text-base font-bold text-slate-800">Install JoeMoney on iOS</h3>
                 </div>
                 <button
                   onClick={() => setShowIOSGuide(false)}

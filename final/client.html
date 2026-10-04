@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JoeMoney Local Order Console</title>
+  <style>
+    :root { color-scheme: light; font-family: "Segoe UI", sans-serif; background: #f4f7f7; color: #172322; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: radial-gradient(ellipse at 12% 0%, #dcefeb 0, transparent 44%), #f4f7f7; }
+    main { width: min(760px, 100%); margin: 0 auto; padding: 28px 18px 56px; }
+    header { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #d8e1df; padding-bottom: 18px; margin-bottom: 24px; }
+    .brand { font-weight: 800; letter-spacing: .02em; font-size: 18px; }
+    .state { display: flex; align-items: center; gap: 8px; color: #586765; font-size: 12px; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: #bd7b31; }
+    .dot.online { background: #188266; }
+    h1 { margin: 0 0 5px; font-size: 24px; }
+    p { color: #5d6b69; font-size: 13px; line-height: 1.5; margin: 0 0 20px; }
+    form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    label { display: grid; gap: 6px; color: #475653; font-size: 12px; font-weight: 650; }
+    input, select { width: 100%; min-height: 42px; padding: 9px 11px; border: 1px solid #cdd9d6; border-radius: 5px; background: #fff; color: #172322; font: inherit; }
+    input:focus, select:focus { outline: 2px solid #238a72; outline-offset: 1px; }
+    .wide { grid-column: 1 / -1; }
+    .inline { display: flex; align-items: center; gap: 8px; }
+    .inline input { width: 18px; min-height: 18px; accent-color: #167d68; }
+    button { min-height: 44px; border: 0; border-radius: 5px; background: #176e5e; color: white; font: inherit; font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: .55; cursor: wait; }
+    #output { margin-top: 20px; padding: 14px; border-left: 3px solid #238a72; background: #eaf3f1; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 ui-monospace, monospace; }
+    .note { margin-top: 18px; font-size: 11px; }
+    @media (max-width: 520px) { form { grid-template-columns: 1fr; } .wide { grid-column: auto; } header { align-items: flex-start; gap: 12px; flex-direction: column; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header><div class="brand">JOEMONEY / LOCAL MT5</div><div class="state"><span id="dot" class="dot"></span><span id="terminal">Checking bridge...</span></div></header>
+    <h1>Demo order console</h1>
+    <p>Submits individual orders to the local bridge. Keep this on the same Windows machine as MT5. Start with a demo account only.</p>
+    <form id="order-form">
+      <label class="wide">Local client token<input id="token" type="password" autocomplete="off" required minlength="32" placeholder="Paste JOEMONEY_CLIENT_TOKEN"></label>
+      <label>Broker symbol<input id="symbol" required value="EURUSD" maxlength="64"></label>
+      <label>Order type<select id="type"><option>BUY_STOP</option><option>SELL_STOP</option><option>BUY_LIMIT</option><option>SELL_LIMIT</option><option>MARKET_BUY</option><option>MARKET_SELL</option></select></label>
+      <label>Volume per position<input id="volume" type="number" min="0.01" max="100" step="0.01" value="0.01" required></label>
+      <label>Entry price (0 for market)<input id="entry" type="number" min="0" step="any" value="1.10000" required></label>
+      <label>Positions at this price<input id="count" type="number" min="1" max="100" step="1" value="2" required></label>
+      <label>TP distance from live spot<input id="distance" type="number" min="0" step="any" value="0.00200"></label>
+      <label class="inline"><input id="tp" type="checkbox" checked> Attach spot-based TP</label>
+      <button id="submit" class="wide" type="submit">Queue demo orders</button>
+    </form>
+    <div id="output" role="status">Waiting for a submission.</div>
+    <p class="note">TP is calculated inside the EA at submission: BUY = live ask + distance; SELL = live bid - distance. Pending entries whose TP is on the wrong side of the entry are rejected. A queued response is not proof of execution; confirm the accepted ticket in MT5.</p>
+  </main>
+  <script>
+    const form = document.querySelector('#order-form');
+    const output = document.querySelector('#output');
+    const status = async () => {
+      const token = document.querySelector('#token').value;
+      if (!token) return;
+      try {
+        const response = await fetch('/v1/status', { headers: { Authorization: `Bearer ${token}` } });
+        const body = await response.json();
+        document.querySelector('#dot').classList.toggle('online', body.terminal_connected);
+        document.querySelector('#terminal').textContent = body.terminal_connected ? `MT5 ${body.configured_login} connected` : body.message;
+      } catch { document.querySelector('#terminal').textContent = 'Bridge unreachable'; }
+    };
+    document.querySelector('#token').addEventListener('input', status);
+    setInterval(status, 5000);
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const submit = document.querySelector('#submit');
+      submit.disabled = true;
+      try {
+        const type = document.querySelector('#type').value;
+        const market = type.startsWith('MARKET_');
+        const count = Number(document.querySelector('#count').value);
+        const order = {
+          symbol: document.querySelector('#symbol').value.trim(), order_type: type,
+          volume: Number(document.querySelector('#volume').value),
+          entry_price: market ? 0 : Number(document.querySelector('#entry').value),
+          tp_enabled: document.querySelector('#tp').checked,
+          tp_distance: Number(document.querySelector('#distance').value),
+        };
+        const response = await fetch('/v1/orders', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID(), Authorization: `Bearer ${document.querySelector('#token').value}` },
+          body: JSON.stringify({ orders: Array.from({ length: count }, () => ({ ...order })) }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+        output.textContent = `Queued ${result.count} separate order(s).\n` + result.orders.map((item) => `${item.id}: ${item.status}`).join('\n');
+        const ids = result.orders.map((item) => item.id);
+        for (let attempt = 0; attempt < 20; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          const states = await Promise.all(ids.map(async (id) => {
+            const response = await fetch(`/v1/orders/${id}`, { headers: { Authorization: `Bearer ${document.querySelector('#token').value}` } });
+            return response.ok ? response.json() : null;
+          }));
+          output.textContent = states.filter(Boolean).map((item) => `${item.id}: ${item.status}${item.ticket ? ` · ticket ${item.ticket}` : ''}${item.result_message ? ` · ${item.result_message}` : ''}`).join('\n');
+          if (states.every((item) => item && item.status !== 'queued' && item.status !== 'claimed')) break;
+        }
+      } catch (error) { output.textContent = `Request failed: ${error.message}`; }
+      finally { submit.disabled = false; }
+    });
+  </script>
+</body>
+</html>

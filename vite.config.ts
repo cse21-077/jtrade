@@ -14,9 +14,9 @@ export default defineConfig(() => {
         includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'icon.svg'],
         manifest: {
           id: '/',
-          name: 'J-Grid Deriv Trader',
-          short_name: 'J-Grid',
-          description: 'Light-blue algorithmic order portal and ladder trading desk for Deriv with splash screen and multi-step buy/sell execution.',
+          name: 'JoeMoney Trading',
+          short_name: 'JoeMoney',
+          description: 'Algorithmic order portal and ladder trading desk for Deriv with multi-step buy/sell execution.',
           theme_color: '#ffffff',
           background_color: '#ffffff',
           display: 'standalone',

@@ -1,0 +1,6 @@
+joemoney.sqlite3
+joemoney.sqlite3-shm
+joemoney.sqlite3-wal
+__pycache__/
+secrets/
+data/
