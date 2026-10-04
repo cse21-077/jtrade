@@ -71,10 +71,7 @@ const checkIsStandalone = () => {
 };
 
 export default function App() {
-  const [isStandalone, setIsStandalone] = useState<boolean>(() => {
-    if (sessionStorage.getItem('pwa_bypassed') === 'true') return true;
-    return checkIsStandalone();
-  });
+  const [isStandalone, setIsStandalone] = useState<boolean>(checkIsStandalone);
   const [showSplash, setShowSplash] = useState(true);
   const [showConnectModal, setShowConnectModal] = useState(false);
   const [activeTab, setActiveTab] = useState<AppTab>('home');
@@ -232,10 +229,6 @@ export default function App() {
       {!isStandalone ? (
         <PWAInstallGate
           onCheckStatus={() => setIsStandalone(checkIsStandalone())}
-          onBypass={() => {
-            sessionStorage.setItem('pwa_bypassed', 'true');
-            setIsStandalone(true);
-          }}
         />
       ) : showSplash ? (
         <SplashScreen

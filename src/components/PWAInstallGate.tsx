@@ -12,10 +12,9 @@ import {
 
 interface PWAInstallGateProps {
   onCheckStatus: () => void;
-  onBypass?: () => void;
 }
 
-export const PWAInstallGate: React.FC<PWAInstallGateProps> = ({ onCheckStatus, onBypass }) => {
+export const PWAInstallGate: React.FC<PWAInstallGateProps> = ({ onCheckStatus }) => {
   const [deviceTab, setDeviceTab] = useState<'ios' | 'android'>('android');
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [installing, setInstalling] = useState(false);
@@ -271,16 +270,6 @@ export const PWAInstallGate: React.FC<PWAInstallGateProps> = ({ onCheckStatus, o
           <div className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
           <span>Waiting for launch from installed PWA icon</span>
         </div>
-
-        {onBypass && (
-          <button
-            type="button"
-            onClick={onBypass}
-            className="w-full py-3.5 rounded-full bg-[#18181b] hover:bg-black active:scale-98 text-white font-extrabold text-xs shadow-md flex items-center justify-center gap-2 transition cursor-pointer"
-          >
-            <span>Bypass PWA & Test in Browser →</span>
-          </button>
-        )}
 
         <button
           type="button"
