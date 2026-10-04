@@ -1,4 +1,4 @@
-import { DerivAccount } from '../types/trading';
+import { DerivAccount, DerivOptionsAccount } from '../types/trading';
 
 type TickCallback = (symbol: string, quote: number, epoch: number) => void;
 type StatusCallback = (connected: boolean, message?: string) => void;
@@ -65,7 +65,17 @@ export class DerivService {
     this.notifyStatus(false, 'Disconnected');
   }
 
-  public async connectOAuthAccount(accountType: 'demo' | 'real'): Promise<DerivAccount> {
+  public async getOAuthOptionsAccounts(): Promise<DerivOptionsAccount[]> {
+    const response = await fetch('/api/deriv/accounts', {
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' },
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || `Could not load Options accounts (${response.status}).`);
+    return Array.isArray(payload.accounts) ? payload.accounts : [];
+  }
+
+  public async connectOAuthAccount(accountId: string): Promise<DerivAccount> {
     if (this.ws && this.ws.readyState !== WebSocket.CLOSED) {
       this.ws.onclose = null;
       this.ws.onerror = null;
@@ -79,7 +89,7 @@ export class DerivService {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountType }),
+        body: JSON.stringify({ accountId }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || `Deriv account connection failed (${response.status}).`);
@@ -96,7 +106,7 @@ export class DerivService {
       };
       await this.openWebSocket(payload.url);
       this.accountInfo.isConnected = true;
-      this.notifyStatus(true, `Connected to ${accountType} Options account ${payload.account.accountId}.`);
+      this.notifyStatus(true, `Connected to ${payload.account.accountType} Options account ${payload.account.accountId}.`);
       return { ...this.accountInfo };
     } catch (error) {
       this.isConnecting = false;

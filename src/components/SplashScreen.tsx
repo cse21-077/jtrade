@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowRight, Loader2, ShieldCheck } from 'lucide-react';
-import { DerivAccount } from '../types/trading';
+import { ArrowRight, Loader2, ShieldCheck, Wallet } from 'lucide-react';
+import { DerivAccount, DerivOptionsAccount } from '../types/trading';
 import { derivService } from '../services/derivWs';
 import { beginDerivOAuth, exchangeDerivOAuthCode } from '../services/derivOAuth';
 import { MascotHead } from './MascotHead';
@@ -10,9 +10,10 @@ interface SplashScreenProps {
 }
 
 export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
-  const [accountType, setAccountType] = useState<'demo' | 'real'>('demo');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [optionsAccounts, setOptionsAccounts] = useState<DerivOptionsAccount[] | null>(null);
+  const [connectingAccountId, setConnectingAccountId] = useState<string | null>(null);
   const callbackStarted = useRef(false);
 
   useEffect(() => {
@@ -26,8 +27,6 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
       const returnedState = params.get('state');
       const expectedState = sessionStorage.getItem('deriv_oauth_state');
       const verifier = sessionStorage.getItem('deriv_oauth_verifier');
-      const savedAccountType = sessionStorage.getItem('deriv_oauth_account_type');
-      const selectedAccountType = savedAccountType === 'real' ? 'real' : 'demo';
       window.history.replaceState({}, document.title, '/');
 
       try {
@@ -40,14 +39,13 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
 
         sessionStorage.removeItem('deriv_oauth_state');
         sessionStorage.removeItem('deriv_oauth_verifier');
-        sessionStorage.removeItem('deriv_oauth_account_type');
         await exchangeDerivOAuthCode(code, verifier);
-        const account = await derivService.connectOAuthAccount(selectedAccountType);
-        onConnected(account);
+        const accounts = await derivService.getOAuthOptionsAccounts();
+        if (accounts.length === 0) throw new Error('No active Deriv Options accounts were found for this login.');
+        setOptionsAccounts(accounts);
       } catch (callbackError) {
         sessionStorage.removeItem('deriv_oauth_state');
         sessionStorage.removeItem('deriv_oauth_verifier');
-        sessionStorage.removeItem('deriv_oauth_account_type');
         setError(callbackError instanceof Error ? callbackError.message : 'Deriv sign-in failed.');
       } finally {
         setLoading(false);
@@ -61,10 +59,23 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
     setError(null);
     setLoading(true);
     try {
-      await beginDerivOAuth(accountType);
+      await beginDerivOAuth();
     } catch (signInError) {
       setLoading(false);
       setError(signInError instanceof Error ? signInError.message : 'Could not start Deriv sign-in.');
+    }
+  };
+
+  const handleSelectAccount = async (selectedAccount: DerivOptionsAccount) => {
+    setConnectingAccountId(selectedAccount.accountId);
+    setError(null);
+    try {
+      const account = await derivService.connectOAuthAccount(selectedAccount.accountId);
+      onConnected(account);
+    } catch (connectError) {
+      setError(connectError instanceof Error ? connectError.message : 'Could not connect this Options account.');
+    } finally {
+      setConnectingAccountId(null);
     }
   };
 
@@ -88,40 +99,53 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
           </p>
         </div>
 
-        <div className="grid grid-cols-2 gap-1 rounded-xl bg-[#27272a] p-1">
-          {(['demo', 'real'] as const).map((type) => (
-            <button
-              key={type}
-              type="button"
-              disabled={loading}
-              onClick={() => setAccountType(type)}
-              className={`py-2.5 rounded-lg text-xs font-bold capitalize transition ${
-                accountType === type
-                  ? type === 'real' ? 'bg-rose-600 text-white' : 'bg-emerald-600 text-white'
-                  : 'text-neutral-400 hover:text-white'
-              }`}
-            >
-              {type} account
-            </button>
-          ))}
-        </div>
-
         {error && (
           <div role="alert" className="p-3 rounded-xl bg-rose-500/20 border border-rose-400/40 text-rose-200 text-xs">
             {error}
           </div>
         )}
 
-        <button
-          type="button"
-          disabled={loading}
-          onClick={handleSignIn}
-          className="w-full py-3 rounded-xl bg-white hover:bg-neutral-100 text-slate-900 font-extrabold text-xs flex items-center justify-center gap-2 transition disabled:opacity-50"
-        >
-          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4 text-emerald-600" />}
-          <span>{loading ? 'Connecting securely...' : `Continue with Deriv · ${accountType}`}</span>
-          {!loading && <ArrowRight className="w-3.5 h-3.5" />}
-        </button>
+        {optionsAccounts ? (
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-neutral-300">Choose the Options account to trade</p>
+            {optionsAccounts.map((optionAccount) => (
+              <button
+                key={optionAccount.accountId}
+                type="button"
+                disabled={connectingAccountId !== null}
+                onClick={() => handleSelectAccount(optionAccount)}
+                className="flex w-full items-center justify-between gap-3 rounded-xl bg-white px-3.5 py-3 text-left text-slate-900 transition hover:bg-neutral-100 disabled:opacity-60"
+              >
+                <span className="flex min-w-0 items-center gap-2.5">
+                  {connectingAccountId === optionAccount.accountId
+                    ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                    : <Wallet className="h-4 w-4 shrink-0 text-slate-500" />}
+                  <span className="min-w-0">
+                    <span className="block truncate font-mono text-xs font-bold">{optionAccount.accountId}</span>
+                    <span className="mt-0.5 block text-[10px] capitalize text-slate-500">{optionAccount.accountType} Options</span>
+                  </span>
+                </span>
+                <span className="shrink-0 text-right font-mono text-xs font-semibold">
+                  {optionAccount.currency} {optionAccount.balance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                </span>
+              </button>
+            ))}
+            <p className="pt-1 text-[10px] leading-relaxed text-neutral-500">
+              This list contains Options accounts. CFD and MT5 accounts aren’t available through this trading connection.
+            </p>
+          </div>
+        ) : (
+          <button
+            type="button"
+            disabled={loading}
+            onClick={handleSignIn}
+            className="w-full py-3 rounded-xl bg-white hover:bg-neutral-100 text-slate-900 font-extrabold text-xs flex items-center justify-center gap-2 transition disabled:opacity-50"
+          >
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4 text-emerald-600" />}
+            <span>{loading ? 'Connecting securely...' : 'Continue with Deriv'}</span>
+            {!loading && <ArrowRight className="w-3.5 h-3.5" />}
+          </button>
+        )}
       </div>
     </div>
   );

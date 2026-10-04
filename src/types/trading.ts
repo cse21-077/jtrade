@@ -93,6 +93,13 @@ export interface DerivAccount {
   mt5Login?: string;
 }
 
+export interface DerivOptionsAccount {
+  accountId: string;
+  accountType: 'demo' | 'real';
+  balance: number;
+  currency: string;
+}
+
 export interface MarketSymbol {
   symbol: string;
   displayName: string;

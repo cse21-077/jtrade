@@ -10,7 +10,7 @@ const base64Url = (bytes: Uint8Array) => {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 };
 
-export const beginDerivOAuth = async (accountType: 'demo' | 'real') => {
+export const beginDerivOAuth = async () => {
   const verifier = base64Url(crypto.getRandomValues(new Uint8Array(32)));
   const state = base64Url(crypto.getRandomValues(new Uint8Array(32)));
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
@@ -18,8 +18,6 @@ export const beginDerivOAuth = async (accountType: 'demo' | 'real') => {
 
   sessionStorage.setItem('deriv_oauth_verifier', verifier);
   sessionStorage.setItem('deriv_oauth_state', state);
-  sessionStorage.setItem('deriv_oauth_account_type', accountType);
-
   const authorizationUrl = new URL('https://auth.deriv.com/oauth2/auth');
   authorizationUrl.search = new URLSearchParams({
     response_type: 'code',

@@ -9,7 +9,6 @@ interface ConnectPortalProps {
 }
 
 export const ConnectPortal: React.FC<ConnectPortalProps> = ({ currentAccount, onCancel }) => {
-  const [accountType, setAccountType] = useState<'demo' | 'real'>(currentAccount.isDemo ? 'demo' : 'real');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -17,7 +16,7 @@ export const ConnectPortal: React.FC<ConnectPortalProps> = ({ currentAccount, on
     setLoading(true);
     setError(null);
     try {
-      await beginDerivOAuth(accountType);
+      await beginDerivOAuth();
     } catch (signInError) {
       setLoading(false);
       setError(signInError instanceof Error ? signInError.message : 'Could not start Deriv sign-in.');
@@ -29,31 +28,13 @@ export const ConnectPortal: React.FC<ConnectPortalProps> = ({ currentAccount, on
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 id="connect-deriv-title" className="text-base font-bold text-slate-900">Connect Deriv</h2>
-          <p className="mt-1 text-xs text-slate-500">Choose the account type, then sign in securely with Deriv.</p>
+          <p className="mt-1 text-xs text-slate-500">Sign in with Deriv, then select the exact Options account to use.</p>
         </div>
         {onCancel && (
           <button type="button" onClick={onCancel} className="p-1 text-slate-400 hover:text-slate-800" aria-label="Close">
             <X className="h-4 w-4" />
           </button>
         )}
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1">
-        {(['demo', 'real'] as const).map((type) => (
-          <button
-            key={type}
-            type="button"
-            disabled={loading}
-            onClick={() => setAccountType(type)}
-            className={`py-2.5 rounded-lg text-xs font-bold capitalize ${
-              accountType === type
-                ? type === 'real' ? 'bg-rose-600 text-white' : 'bg-emerald-600 text-white'
-                : 'text-slate-500 hover:text-slate-900'
-            }`}
-          >
-            {type} account
-          </button>
-        ))}
       </div>
 
       {error && <p role="alert" className="mt-3 rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}
@@ -65,7 +46,7 @@ export const ConnectPortal: React.FC<ConnectPortalProps> = ({ currentAccount, on
         className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 py-3 text-xs font-bold text-white hover:bg-slate-700 disabled:opacity-50"
       >
         {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-        <span>{loading ? 'Connecting securely...' : `Continue with Deriv · ${accountType}`}</span>
+        <span>{loading ? 'Connecting securely...' : `Switch from ${currentAccount.loginId || 'current account'}`}</span>
         {!loading && <ArrowRight className="h-3.5 w-3.5" />}
       </button>
     </section>
