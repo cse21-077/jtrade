@@ -18,45 +18,148 @@ the VPS, so clients never authenticate by hand.
 - Terminal supervision: terminals are launched on registration, re-launched when orders arrive for a stopped terminal, and reconciled on bridge start (pre-warm on boot).
 - Explicit per-account connection status from the EA heartbeat — bridge or EA polling alone does not mean the broker connection is up.
 
-## One-time VPS setup (Windows Server, MT5 installed)
+## VPS Setup and Run (Windows Server)
 
-1. **Seed the master terminal.** Create one clean portable MT5 folder (e.g.
-   `C:\MT5Terminals\JoeMoneyMaster`) with `terminal64.exe`, log in once so all
-   broker servers are cached, then log out. Set `JOEMONEY_TERMINAL_MASTER` to it.
-   New slots are cloned from this master.
-2. **Compile the EA.** Compile `JoeMoneyBridgeEA.mq5` in MetaEditor and set
-   `JOEMONEY_EA_SOURCE` to the resulting `.ex5`.
-3. **Create the chart template.** Start the master terminal, attach the compiled EA
-   to a chart with `BridgeUrl=http://127.0.0.1:8765` and the EA token you will use
-   (printed by `start-bridge.ps1`), enable Algo Trading, allow the URL in MT5
-   WebRequest settings, then save the chart profile: Charts > Save As, name it
-   `JoeMoney`, saved under `MQL5\Profiles\Charts\Default\JoeMoney.chr`. Set
-   `JOEMONEY_CHART_TEMPLATE` to that file. Every launched terminal opens this chart
-   with the EA already running. Until this file exists, terminals still launch and
-   log in, but the EA must be attached manually per terminal.
-4. **DNS + Caddy.** Point a domain (or free DuckDNS subdomain) A record at
-   178.238.234.68 — Let's Encrypt does not issue certificates for bare IPs. Put the
-   hostname in `Caddyfile` and run Caddy on the VPS. Firewall: allow 443 (and RDP
-   from your admin IP only); port 8765 must stay loopback.
-5. **PWA env.** Set `VITE_JOEMONEY_API_URL=https://bridge.toporapula.dev` and `VITE_JOEMONEY_BRIDGE_KEY` (the key printed by `start-bridge.ps1`) in Vercel Production environment variables and redeploy.
+These steps use the current deployment paths and domain: `C:\JoeMoney\final`,
+`C:\MT5Terminals\JoeMoneyMaster`, and `bridge.toporapula.dev`. The master is a
+one-time template-building terminal. The bridge starts the per-account portable
+terminals.
 
-## Run
+### 1. Seed and open the master terminal
+
+The master folder was seeded by copying the installed MT5 folder. On a fresh
+server, copy it once with:
 
 ```powershell
-.\start-caddy.ps1     # window 1: HTTPS edge (needs caddy.exe at C:\Caddy\ or on PATH)
-.\start-bridge.ps1    # window 2: bridge + terminals
+robocopy "C:\Program Files\MetaTrader 5" "C:\MT5Terminals\JoeMoneyMaster" /E
 ```
 
-The script loads/creates the DPAPI-protected **bridge key**, prints it (bake into
-the PWA as `VITE_JOEMONEY_BRIDGE_KEY` in Vercel; it is also the EA token baked into
-`JoeMoney.chr`),
-re-launches any stopped terminals for active accounts, then starts the bridge at
-`http://127.0.0.1:8765` behind Caddy. Keep the window open.
+Do not repeat the copy over a configured master unless you intend to refresh it.
+Open the master in portable mode from a PowerShell window:
+
+```powershell
+& "C:\MT5Terminals\JoeMoneyMaster\terminal64.exe" /portable
+```
+
+Log in once so MT5 caches the broker server, then log out. If Caddy and the bridge
+are already running, use this command by itself; do not run `start-all.ps1` again.
+
+### 2. Compile the EA and save the master chart
+
+1. Copy the EA source into the master terminal's Experts folder:
+
+   ```powershell
+   Copy-Item "C:\JoeMoney\final\JoeMoneyBridgeEA.mq5" "C:\MT5Terminals\JoeMoneyMaster\MQL5\Experts\JoeMoneyBridgeEA.mq5" -Force
+   ```
+
+   Open that copy in MetaEditor and press **F7**. Confirm the compiled file exists at
+   `C:\MT5Terminals\JoeMoneyMaster\MQL5\Experts\JoeMoneyBridgeEA.ex5`.
+2. Read the current bridge key from the already-running bridge PowerShell window.
+   If the bridge is not running, open `C:\JoeMoney\final` and run
+   `.start-all.ps1` once; keep its Caddy and bridge windows open. Use the key
+   printed by the bridge. This is one shared key: enter it as the EA's `EaToken`
+   and set it as `VITE_JOEMONEY_BRIDGE_KEY` in Vercel. There is no separate EA
+   token to create.
+3. In the master MT5, open a chart and attach `JoeMoneyBridgeEA`. Set
+   `BridgeUrl` to `http://127.0.0.1:8765` and `EaToken` to the current bridge key.
+   Enable **Algo Trading**. In MT5 Options > Expert Advisors, allow WebRequest to
+   `http://127.0.0.1:8765`.
+4. Save the profile with **File > Profiles > Save As**, named `JoeMoney`. Close the
+   master MT5, then copy:
+
+   ```text
+   C:\MT5Terminals\JoeMoneyMaster\MQL5\Profiles\Charts\JoeMoney\chart01.chr
+   ```
+
+   to:
+
+   ```text
+   C:\MT5Terminals\JoeMoneyMaster\MQL5\Profiles\Charts\Default\chart01.chr
+   ```
+
+   The MT5 profile stores its chart as `chart01.chr` inside the `JoeMoney` profile
+   folder. Do not rename the file. The bridge reads it from
+   `Charts\JoeMoney\chart01.chr` and copies it into each account slot's
+   `Charts\Default\chart01.chr` before launching that portable terminal. This
+   carries the EA/chart inputs into new slots. Keep the master closed during
+   normal operation so it does not run an extra EA instance.
+
+### 3. DNS, Caddy, and firewall
+
+1. The DNS A record for `bridge.toporapula.dev` must point to `178.238.234.68`.
+   Caddy needs a domain name to obtain a public TLS certificate.
+2. Caddy needs no installer. Put the downloaded Windows executable, named exactly
+   `caddy.exe`, at `C:\JoeMoney\final\caddy.exe` or `C:\Caddy\caddy.exe`.
+   `start-caddy.ps1` also checks `PATH`.
+3. Allow inbound TCP ports **80** and **443** in Windows Firewall. For example,
+   from Administrator PowerShell:
+
+   ```powershell
+   New-NetFirewallRule -DisplayName "Caddy HTTP" -Direction Inbound -Protocol TCP -LocalPort 80 -Action Allow
+   New-NetFirewallRule -DisplayName "Caddy HTTPS" -Direction Inbound -Protocol TCP -LocalPort 443 -Action Allow
+   ```
+
+   Allow these ports in the Contabo firewall/security settings too, if enabled.
+   Leave port `8765` private. Caddy serves HTTPS and renews its certificate.
+   This deployment obtained its certificate successfully after public access to
+   ports 80/443 was allowed; earlier timeout messages in the log were from before
+   that change.
+
+### 4. Set Vercel environment variables
+
+Set these in Vercel Production and redeploy after changing them:
+
+```text
+VITE_JOEMONEY_API_URL=https://bridge.toporapula.dev
+VITE_JOEMONEY_BRIDGE_KEY=<current key printed by start-bridge.ps1>
+```
+
+The bridge saves its DPAPI-protected key at
+`C:\ProgramData\JoeMoney\bridge-key.dpapi`, outside the app folder, and reuses it
+on later starts and app updates. Run the bridge under the same Windows account
+that created the key. The EA `EaToken` and PWA bridge key are this same value; do
+not rotate either unless the saved key has intentionally been replaced. If an old
+key file is migrated from `C:\JoeMoney\final\secrets`, the bridge reports that
+migration. If the stable key cannot be decrypted, startup stops with an error
+instead of silently issuing a different key.
+
+Opening `https://bridge.toporapula.dev/v1/accounts` in a browser without an API
+key returns `{"error":"Unauthorized"}`. That is expected and confirms HTTPS
+reached the authenticated bridge.
+
+### 5. Start normally and apply the template to existing slots
+
+When services are stopped, start normal operation from `C:\JoeMoney\final` with:
+
+```powershell
+.\start-all.ps1
+```
+
+It opens Caddy and the bridge in separate PowerShell windows. Keep both open. The
+bridge reconciles active registered accounts and starts their portable MT5 slot
+terminals. Do not manually start slot terminals or rerun `start-all.ps1` while the
+services are already running, as that can cause port conflicts.
+
+A slot already running when the chart file is installed will not automatically
+load the new template. Close the account's slot terminal, then restart only the
+bridge: press **Ctrl+C** in the bridge window and run this from
+`C:\JoeMoney\final`:
+
+```powershell
+.\start-bridge.ps1
+```
+
+The bridge relaunches active accounts and copies the chart template into their
+slots. Leave Caddy running; it does not need restarting. Alternatively, attach the
+EA manually to an already-running slot chart.
+
+For manual startup after both services have stopped, use `start-caddy.ps1` in one
+PowerShell window and `start-bridge.ps1` in another. Do not run these alongside
+`start-all.ps1`.
 
 ## Test the bridge
 
-Before moving it to the VPS, run the unit tests locally (terminal launching and
-process detection are mocked):
+Before moving it to the VPS, run the unit tests locally (terminal launching and process detection are mocked):
 
 ```powershell
 python -m unittest discover -s final -v
