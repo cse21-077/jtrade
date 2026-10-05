@@ -1,8 +1,10 @@
-"""JoeMoney MT5 command bridge: multi-account edition. Uses only the Python standard library.
+"""JoeMoney MT5 command bridge. Uses only the Python standard library.
 
-Mentors register MT5 accounts (login/password/server) over HTTPS; the bridge stores
-credentials in the local SQLite database, launches portable MT5 terminals with startup.ini auto-login,
-and queues orders per account. The JoeMoney EA inside each terminal polls locally,
+A single static bridge key (JOEMONEY_BRIDGE_KEY) protects every endpoint; the same
+key is baked into the private PWA build, so clients never authenticate by hand.
+MT5 accounts are registered over HTTPS; the bridge stores credentials in the local
+SQLite database, launches portable MT5 terminals with startup.ini auto-login, and
+queues orders per account. The JoeMoney EA inside each terminal polls locally,
 claims its account's commands, and executes them in MT5.
 """
 
@@ -14,7 +16,6 @@ import json
 import math
 import os
 import re
-import secrets
 import sqlite3
 import threading
 import time
@@ -28,6 +29,7 @@ import terminal_manager as tm
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = Path(os.environ.get("JOEMONEY_DB_PATH", ROOT / "joemoney.sqlite3"))
+BRIDGE_KEY = os.environ.get("JOEMONEY_BRIDGE_KEY", "")
 EA_TOKEN = os.environ.get("JOEMONEY_EA_TOKEN", "")
 ALLOWED_ORIGIN = os.environ.get("JOEMONEY_ALLOWED_ORIGIN", "http://localhost:3000")
 MAX_BATCH_SIZE = 100
@@ -48,7 +50,6 @@ def connect_db(path: Path | None = None) -> sqlite3.Connection:
         """CREATE TABLE IF NOT EXISTS orders (
             id TEXT PRIMARY KEY,
             login TEXT NOT NULL,
-            mentor_token TEXT NOT NULL,
             symbol TEXT NOT NULL,
             order_type TEXT NOT NULL,
             volume REAL NOT NULL,
@@ -65,7 +66,6 @@ def connect_db(path: Path | None = None) -> sqlite3.Connection:
     order_columns = {row[1] for row in connection.execute("PRAGMA table_info(orders)")}
     if "login" not in order_columns:
         connection.execute("ALTER TABLE orders ADD COLUMN login TEXT NOT NULL DEFAULT ''")
-        connection.execute("ALTER TABLE orders ADD COLUMN mentor_token TEXT NOT NULL DEFAULT ''")
     connection.execute(
         """CREATE TABLE IF NOT EXISTS batches (
             idempotency_key TEXT PRIMARY KEY,
@@ -93,20 +93,6 @@ def connect_db(path: Path | None = None) -> sqlite3.Connection:
             updated_at REAL NOT NULL
         )"""
     )
-    connection.execute(
-        """CREATE TABLE IF NOT EXISTS mentors (
-            token TEXT PRIMARY KEY,
-            label TEXT NOT NULL DEFAULT '',
-            created_at REAL NOT NULL
-        )"""
-    )
-    connection.execute(
-        """CREATE TABLE IF NOT EXISTS mentor_accounts (
-            mentor_token TEXT NOT NULL,
-            login TEXT NOT NULL,
-            PRIMARY KEY (mentor_token, login)
-        )"""
-    )
     return connection
 
 
@@ -129,19 +115,12 @@ def auth_matches(header: str, expected: str) -> bool:
     return hmac.compare_digest(header[7:], expected)
 
 
-def mentor_for(header: str) -> str | None:
-    if not header.startswith("Bearer "):
-        return None
-    token = header[7:]
-    with db_session() as db:
-        row = db.execute("SELECT token FROM mentors WHERE token=?", (token,)).fetchone()
-    return row["token"] if row else None
+def client_authed(header: str) -> bool:
+    return auth_matches(header, BRIDGE_KEY)
 
 
-def mentor_owns(db: sqlite3.Connection, mentor: str, login: str) -> bool:
-    return db.execute(
-        "SELECT 1 FROM mentor_accounts WHERE mentor_token=? AND login=?", (mentor, login)
-    ).fetchone() is not None
+def ea_authed(header: str) -> bool:
+    return auth_matches(header, BRIDGE_KEY) or auth_matches(header, EA_TOKEN)
 
 
 def validate_account(payload: object) -> dict:
@@ -198,17 +177,6 @@ def validate_order(item: object) -> dict:
     }
 
 
-def ensure_default_mentor() -> str:
-    """Create the default mentor token on first run and return it. Callers print it."""
-    with db_session() as db:
-        row = db.execute("SELECT token FROM mentors ORDER BY created_at LIMIT 1").fetchone()
-        if row:
-            return row["token"]
-        token = secrets.token_hex(24)
-        db.execute("INSERT INTO mentors(token,label,created_at) VALUES(?,?,?)", (token, "default", time.time()))
-    return token
-
-
 def reconcile_on_boot() -> None:
     """Re-launch terminals for active accounts that are not running (pre-warm on boot)."""
     running = tm.running_logins(ttl=0)
@@ -224,7 +192,7 @@ def reconcile_on_boot() -> None:
 
 
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "JoeMoneyBridge/2.0"
+    server_version = "JoeMoneyBridge/2.1"
 
     def log_message(self, fmt: str, *args: object) -> None:
         print(f"[{self.log_date_time_string()}] {fmt % args}")
@@ -254,9 +222,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
             raise ValueError("Request body must be between 1 byte and 256 KB.")
         return json.loads(self.rfile.read(length))
 
-    def _require_mentor(self) -> str | None:
-        return mentor_for(self.headers.get("Authorization", ""))
-
     def do_OPTIONS(self) -> None:
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", ALLOWED_ORIGIN)
@@ -277,17 +242,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
         if parsed.path == "/health":
-            return self._send(200, {"status": "ok", "service": "JoeMoney multi-account MT5 bridge"})
+            return self._send(200, {"status": "ok", "service": "JoeMoney MT5 bridge"})
         if parsed.path == "/v1/status":
-            mentor = self._require_mentor()
-            if not mentor:
+            if not client_authed(self.headers.get("Authorization", "")):
                 return self._send(401, {"error": "Unauthorized"})
             login = parse_qs(parsed.query).get("login", [""])[0].strip()
             now = time.time()
             with db_session() as db:
                 if login:
-                    if not mentor_owns(db, mentor, login):
-                        return self._send(404, {"error": "Unknown account for this mentor token."})
                     row = db.execute(
                         "SELECT connected,last_seen,message FROM terminal_status WHERE login=?", (login,)
                     ).fetchone()
@@ -298,19 +260,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
                         "message": row["message"] if row else "Waiting for the JoeMoney EA heartbeat.",
                     })
                 count = db.execute("SELECT COUNT(*) AS c FROM accounts WHERE is_active=1").fetchone()["c"]
-            return self._send(200, {"status": "ok", "service": "JoeMoney multi-account MT5 bridge", "active_accounts": count})
+            return self._send(200, {"status": "ok", "service": "JoeMoney MT5 bridge", "active_accounts": count})
         if parsed.path == "/v1/accounts":
-            mentor = self._require_mentor()
-            if not mentor:
+            if not client_authed(self.headers.get("Authorization", "")):
                 return self._send(401, {"error": "Unauthorized"})
             running = tm.running_logins()
             now = time.time()
             with db_session() as db:
-                rows = db.execute(
-                    "SELECT a.* FROM accounts a JOIN mentor_accounts m ON m.login=a.login "
-                    "WHERE m.mentor_token=? ORDER BY a.created_at",
-                    (mentor,),
-                ).fetchall()
+                rows = db.execute("SELECT * FROM accounts ORDER BY created_at").fetchall()
                 accounts = []
                 for row in rows:
                     heartbeat = db.execute(
@@ -331,19 +288,18 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return self._send(200, {"accounts": accounts})
         match = re.fullmatch(r"/v1/orders/([0-9a-f-]+)", parsed.path)
         if match:
-            mentor = self._require_mentor()
-            if not mentor:
+            if not client_authed(self.headers.get("Authorization", "")):
                 return self._send(401, {"error": "Unauthorized"})
             with db_session() as db:
                 row = db.execute(
-                    "SELECT id,status,ticket,result_message,created_at,updated_at FROM orders WHERE id=? AND mentor_token=?",
-                    (match.group(1), mentor),
+                    "SELECT id,status,ticket,result_message,created_at,updated_at FROM orders WHERE id=?",
+                    (match.group(1),),
                 ).fetchone()
             if not row:
                 return self._send(404, {"error": "Unknown order."})
             return self._send(200, dict(row))
         if parsed.path == "/v1/commands/next":
-            if not auth_matches(self.headers.get("Authorization", ""), EA_TOKEN):
+            if not ea_authed(self.headers.get("Authorization", "")):
                 return self._send(401, {"error": "Unauthorized"})
             login = parse_qs(parsed.query).get("login", [""])[0].strip()
             now = time.time()
@@ -373,8 +329,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path == "/v1/accounts":
-            mentor = self._require_mentor()
-            if not mentor:
+            if not client_authed(self.headers.get("Authorization", "")):
                 return self._send(401, {"error": "Unauthorized"})
             try:
                 account = validate_account(self._read_json())
@@ -405,10 +360,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
                         "VALUES(?,?,?,?,1,?,?)",
                         (account["login"], account["password"], account["server"], folder_path, now, now),
                     )
-                db.execute(
-                    "INSERT OR IGNORE INTO mentor_accounts(mentor_token,login) VALUES(?,?)",
-                    (mentor, account["login"]),
-                )
             launched, message = tm.ensure_terminal({
                 "login": account["login"],
                 "password": account["password"],
@@ -423,18 +374,17 @@ class BridgeHandler(BaseHTTPRequestHandler):
             })
         match = re.fullmatch(r"/v1/accounts/(\d{4,20})/deactivate", parsed.path)
         if match:
-            mentor = self._require_mentor()
-            if not mentor:
+            if not client_authed(self.headers.get("Authorization", "")):
                 return self._send(401, {"error": "Unauthorized"})
-            login = match.group(1)
             with db_session() as db:
-                if not mentor_owns(db, mentor, login):
-                    return self._send(404, {"error": "Unknown account for this mentor token."})
-                db.execute("UPDATE accounts SET is_active=0,updated_at=? WHERE login=?", (time.time(), login))
-            return self._send(200, {"status": "deactivated", "login": login})
+                updated = db.execute(
+                    "UPDATE accounts SET is_active=0,updated_at=? WHERE login=?", (time.time(), match.group(1))
+                ).rowcount
+            if not updated:
+                return self._send(404, {"error": "Unknown account."})
+            return self._send(200, {"status": "deactivated", "login": match.group(1)})
         if parsed.path == "/v1/orders":
-            mentor = self._require_mentor()
-            if not mentor:
+            if not client_authed(self.headers.get("Authorization", "")):
                 return self._send(401, {"error": "Unauthorized"})
             try:
                 payload = self._read_json()
@@ -453,8 +403,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 account = db.execute(
                     "SELECT * FROM accounts WHERE login=? AND is_active=1", (login,)
                 ).fetchone()
-                if not account or not mentor_owns(db, mentor, login):
-                    return self._send(409, {"error": "Unknown or inactive MT5 account for this mentor token."})
+                if not account:
+                    return self._send(409, {"error": "Unknown or inactive MT5 account."})
             idempotency_key = self.headers.get("Idempotency-Key", "")
             if not re.fullmatch(r"[A-Za-z0-9._:-]{8,128}", idempotency_key):
                 return self._send(400, {"error": "Provide an Idempotency-Key (8-128 safe characters)."})
@@ -477,10 +427,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     cached["replayed"] = True
                     return self._send(200, cached)
                 db.executemany(
-                    "INSERT INTO orders(id,login,mentor_token,symbol,order_type,volume,entry_price,tp_enabled,tp_distance,status,created_at,updated_at) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,'queued',?,?)",
+                    "INSERT INTO orders(id,login,symbol,order_type,volume,entry_price,tp_enabled,tp_distance,status,created_at,updated_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,'queued',?,?)",
                     [
-                        (record["id"], login, mentor, order["symbol"], order["order_type"], order["volume"],
+                        (record["id"], login, order["symbol"], order["order_type"], order["volume"],
                          order["entry_price"], int(order["tp_enabled"]), order["tp_distance"], now, now)
                         for record, order in zip(created, validated)
                     ],
@@ -494,7 +444,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return self._send(202, response_body)
         match = re.fullmatch(r"/v1/commands/([0-9a-f-]+)/result", parsed.path)
         if match:
-            if not auth_matches(self.headers.get("Authorization", ""), EA_TOKEN):
+            if not ea_authed(self.headers.get("Authorization", "")):
                 return self._send(401, {"error": "Unauthorized"})
             try:
                 result = self._read_json()
@@ -513,7 +463,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 return self._send(404, {"error": "Unknown or already completed order."})
             return self._send(200, {"status": "recorded"})
         if parsed.path == "/v1/terminal/status":
-            if not auth_matches(self.headers.get("Authorization", ""), EA_TOKEN):
+            if not ea_authed(self.headers.get("Authorization", "")):
                 return self._send(401, {"error": "Unauthorized"})
             try:
                 status = self._read_json()
@@ -536,8 +486,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    if len(EA_TOKEN) < 32:
-        raise SystemExit("Set JOEMONEY_EA_TOKEN (32+ characters) before starting.")
+    if len(BRIDGE_KEY) < 32:
+        raise SystemExit("Set JOEMONEY_BRIDGE_KEY (32+ characters) before starting.")
     with db_session():
         pass
     if os.environ.get("JOEMONEY_RECONCILE_ON_BOOT", "1") == "1":
@@ -545,7 +495,7 @@ def main() -> None:
     host = os.environ.get("JOEMONEY_HOST", "127.0.0.1")
     port = int(os.environ.get("JOEMONEY_PORT", "8765"))
     server = ThreadingHTTPServer((host, port), BridgeHandler)
-    print("JoeMoney multi-account bridge listening at http://%s:%d" % (host, port))
+    print("JoeMoney bridge listening at http://%s:%d" % (host, port))
     server.serve_forever()
 
 

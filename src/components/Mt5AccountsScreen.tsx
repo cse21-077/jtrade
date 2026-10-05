@@ -209,10 +209,10 @@ export const Mt5AccountsScreen: React.FC = () => {
             </button>
           </div>
           <label className="grid gap-1.5 text-xs font-semibold text-slate-700">
-            Mentor token
-            <input type="password" autoComplete="off" value={token} onChange={(event) => setToken(event.target.value)} className="h-11 rounded-md border border-slate-300 bg-white px-3 font-mono text-sm" placeholder="Paste the mentor token printed by the VPS bridge" />
+            Bridge key
+            <input type="password" autoComplete="off" value={token} onChange={(event) => setToken(event.target.value)} className="h-11 rounded-md border border-slate-300 bg-white px-3 font-mono text-sm" placeholder="Only needed if VITE_JOEMONEY_BRIDGE_KEY is not baked into this build" />
           </label>
-          <p className="mt-2 text-[11px] leading-relaxed text-slate-500">Kept only in this tab's session storage. It is not included in the PWA build.</p>
+          <p className="mt-2 text-[11px] leading-relaxed text-slate-500">Pre-filled when the key is baked into the build. Otherwise paste the key printed by start-bridge.ps1 on the VPS; it is kept only in this tab's session storage.</p>
           {health && (
             <p className="mt-3 text-xs font-semibold text-emerald-800" role="status">
               Bridge reachable — {health.active_accounts} active account(s) on the VPS.
@@ -242,7 +242,7 @@ export const Mt5AccountsScreen: React.FC = () => {
 
         <section className="border-b border-slate-200 pb-5">
           <h2 className="mb-3 text-sm font-bold">Accounts</h2>
-          {accounts.length === 0 && <p className="text-xs text-slate-500">No accounts registered for this mentor token yet.</p>}
+          {accounts.length === 0 && <p className="text-xs text-slate-500">No accounts registered on the bridge yet.</p>}
           <ul className="space-y-2">
             {accounts.map((account) => (
               <li key={account.login}>

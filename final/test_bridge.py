@@ -11,9 +11,7 @@ from unittest.mock import patch
 import bridge
 
 
-MENTOR_A = "test-mentor-token-a"
-MENTOR_B = "test-mentor-token-b"
-EA_TOKEN = "test-ea-token"
+BRIDGE_KEY = "test-bridge-key"
 
 
 class BridgeTests(unittest.TestCase):
@@ -38,7 +36,8 @@ class BridgeTests(unittest.TestCase):
 
         cls.patches = [
             patch.object(bridge, "DB_PATH", cls.db_path),
-            patch.object(bridge, "EA_TOKEN", EA_TOKEN),
+            patch.object(bridge, "BRIDGE_KEY", BRIDGE_KEY),
+            patch.object(bridge, "EA_TOKEN", "test-ea-token"),
             patch.object(bridge, "ALLOWED_ORIGIN", "http://localhost:3000"),
             patch.object(bridge.tm, "assign_slot", fake_assign_slot),
             patch.object(bridge.tm, "ensure_terminal", lambda account: (True, "launched")),
@@ -78,13 +77,9 @@ class BridgeTests(unittest.TestCase):
             db.execute("DELETE FROM batches")
             db.execute("DELETE FROM terminal_status")
             db.execute("DELETE FROM accounts")
-            db.execute("DELETE FROM mentors")
-            db.execute("DELETE FROM mentor_accounts")
-            db.execute("INSERT INTO mentors(token,label,created_at) VALUES(?,?,0)", (MENTOR_A, "a"))
-            db.execute("INSERT INTO mentors(token,label,created_at) VALUES(?,?,0)", (MENTOR_B, "b"))
 
-    def provision(self, login="123456", token=MENTOR_A, password="secret-pass", server="DemoBroker"):
-        return self.request("/v1/accounts", "POST", token,
+    def provision(self, login="123456", password="secret-pass", server="DerivSVG-Server-02"):
+        return self.request("/v1/accounts", "POST", BRIDGE_KEY,
                             {"login": login, "password": password, "server": server})
 
     def test_auth_required_and_batch_multiplicity_preserved(self):
@@ -92,12 +87,15 @@ class BridgeTests(unittest.TestCase):
         order = {"symbol": "EURUSD", "order_type": "SELL_STOP", "volume": 0.1,
                  "entry_price": 1.075, "tp_enabled": True, "tp_distance": 0.002}
         self.assertEqual(self.request("/v1/orders", "POST", data={"login": "123456", "orders": [order]})[0], 401)
-        status, body = self.request("/v1/orders", "POST", MENTOR_A,
+        self.assertEqual(self.request("/v1/orders", "POST", "wrong-key",
+                                      {"login": "123456", "orders": [order]},
+                                      {"Idempotency-Key": "wrong-key-01"})[0], 401)
+        status, body = self.request("/v1/orders", "POST", BRIDGE_KEY,
                                     {"login": "123456", "orders": [order, order]},
                                     {"Idempotency-Key": "batch-duplicate-01"})
         self.assertEqual(status, 202)
         self.assertEqual(json.loads(body)["count"], 2)
-        replay_status, replay = self.request("/v1/orders", "POST", MENTOR_A,
+        replay_status, replay = self.request("/v1/orders", "POST", BRIDGE_KEY,
                                              {"login": "123456", "orders": [order, order]},
                                              {"Idempotency-Key": "batch-duplicate-01"})
         self.assertEqual(replay_status, 200)
@@ -108,64 +106,64 @@ class BridgeTests(unittest.TestCase):
         self.provision()
         order = {"symbol": "EURUSD", "order_type": "BUY_STOP", "volume": 0.1,
                  "entry_price": 1.09, "tp_enabled": False, "tp_distance": 0}
-        _, created_body = self.request("/v1/orders", "POST", MENTOR_A,
+        _, created_body = self.request("/v1/orders", "POST", BRIDGE_KEY,
                                        {"login": "123456", "orders": [order]},
                                        {"Idempotency-Key": "single-order-01"})
         order_id = json.loads(created_body)["orders"][0]["id"]
-        status, command = self.request("/v1/commands/next?login=123456", token=EA_TOKEN)
+        status, command = self.request("/v1/commands/next?login=123456", token="test-ea-token")
         self.assertEqual(status, 200)
         self.assertEqual(command.decode().split("|")[:3], [order_id, "EURUSD", "BUY_STOP"])
-        self.assertEqual(self.request("/v1/commands/next?login=123456", token=EA_TOKEN)[0], 204)
-        status, _ = self.request(f"/v1/commands/{order_id}/result", "POST", EA_TOKEN,
+        self.assertEqual(self.request("/v1/commands/next?login=123456", token="test-ea-token")[0], 204)
+        status, _ = self.request(f"/v1/commands/{order_id}/result", "POST", "test-ea-token",
                                  {"status": "placed", "ticket": "98765", "message": "Placed"})
         self.assertEqual(status, 200)
-        lookup_status, lookup_body = self.request(f"/v1/orders/{order_id}", token=MENTOR_A)
+        lookup_status, lookup_body = self.request(f"/v1/orders/{order_id}", token=BRIDGE_KEY)
         self.assertEqual(lookup_status, 200)
         self.assertEqual(json.loads(lookup_body)["ticket"], "98765")
 
     def test_orders_are_routed_per_login(self):
         self.provision(login="123456")
-        self.provision(login="654321", token=MENTOR_A)
+        self.provision(login="654321")
         order = {"symbol": "EURUSD", "order_type": "BUY_STOP", "volume": 0.1,
                  "entry_price": 1.09, "tp_enabled": False, "tp_distance": 0}
-        self.request("/v1/orders", "POST", MENTOR_A,
+        self.request("/v1/orders", "POST", BRIDGE_KEY,
                      {"login": "123456", "orders": [order]}, {"Idempotency-Key": "route-01"})
         # The other account's EA must not claim this command.
-        self.assertEqual(self.request("/v1/commands/next?login=654321", token=EA_TOKEN)[0], 204)
-        self.assertEqual(self.request("/v1/commands/next?login=123456", token=EA_TOKEN)[0], 200)
+        self.assertEqual(self.request("/v1/commands/next?login=654321", token="test-ea-token")[0], 204)
+        self.assertEqual(self.request("/v1/commands/next?login=123456", token="test-ea-token")[0], 200)
 
     def test_unknown_or_inactive_login_is_rejected(self):
-        self.assertEqual(self.request("/v1/commands/next?login=999999", token=EA_TOKEN)[0], 403)
+        self.assertEqual(self.request("/v1/commands/next?login=999999", token="test-ea-token")[0], 403)
         order = {"symbol": "EURUSD", "order_type": "BUY_STOP", "volume": 0.1,
                  "entry_price": 1.09, "tp_enabled": False, "tp_distance": 0}
-        self.assertEqual(self.request("/v1/orders", "POST", MENTOR_A,
+        self.assertEqual(self.request("/v1/orders", "POST", BRIDGE_KEY,
                                       {"login": "999999", "orders": [order]},
                                       {"Idempotency-Key": "unknown-login-01"})[0], 409)
         self.provision(login="555555")
-        self.request("/v1/accounts/555555/deactivate", "POST", MENTOR_A)
-        self.assertEqual(self.request("/v1/commands/next?login=555555", token=EA_TOKEN)[0], 403)
-        self.assertEqual(self.request("/v1/orders", "POST", MENTOR_A,
+        self.request("/v1/accounts/555555/deactivate", "POST", BRIDGE_KEY)
+        self.assertEqual(self.request("/v1/commands/next?login=555555", token="test-ea-token")[0], 403)
+        self.assertEqual(self.request("/v1/orders", "POST", BRIDGE_KEY,
                                       {"login": "555555", "orders": [order]},
                                       {"Idempotency-Key": "inactive-login-01"})[0], 409)
 
     def test_polling_does_not_claim_broker_is_connected(self):
         self.provision()
-        status, _ = self.request("/v1/commands/next?login=123456", token=EA_TOKEN)
+        status, _ = self.request("/v1/commands/next?login=123456", token="test-ea-token")
         self.assertEqual(status, 204)
-        status, body = self.request("/v1/status?login=123456", token=MENTOR_A)
+        status, body = self.request("/v1/status?login=123456", token=BRIDGE_KEY)
         self.assertEqual(status, 200)
         self.assertFalse(json.loads(body)["terminal_connected"])
 
     def test_explicit_ea_heartbeat_marks_matching_login_connected(self):
         self.provision()
-        status, _ = self.request("/v1/terminal/status", "POST", EA_TOKEN,
-                                 {"login": "123456", "connected": True, "message": "MT5 connected"})
+        status, _ = self.request("/v1/terminal/status", "POST", "test-ea-token",
+                                 {"login": "123456", "connected": True, "message": "MT5 login successful"})
         self.assertEqual(status, 200)
-        status, body = self.request("/v1/status?login=123456", token=MENTOR_A)
+        status, body = self.request("/v1/status?login=123456", token=BRIDGE_KEY)
         self.assertEqual(status, 200)
         self.assertTrue(json.loads(body)["terminal_connected"])
         # Heartbeats from unregistered logins are refused.
-        self.assertEqual(self.request("/v1/terminal/status", "POST", EA_TOKEN,
+        self.assertEqual(self.request("/v1/terminal/status", "POST", "test-ea-token",
                                       {"login": "424242", "connected": True})[0], 403)
 
     def test_provision_registers_account_and_hides_password(self):
@@ -176,48 +174,21 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(payload["login"], "123456")
         self.assertTrue(payload["folder_path"])
         self.assertNotIn("top-secret", body.decode())
-        status, body = self.request("/v1/accounts", token=MENTOR_A)
+        status, body = self.request("/v1/accounts", token=BRIDGE_KEY)
         self.assertEqual(status, 200)
         account = json.loads(body)["accounts"][0]
         self.assertEqual(account["login"], "123456")
-        self.assertEqual(account["server"], "DemoBroker")
+        self.assertEqual(account["server"], "DerivSVG-Server-02")
         self.assertTrue(account["terminal_running"])
         self.assertNotIn("top-secret", body.decode())
 
     def test_reprovision_updates_credentials_without_duplicate(self):
-        self.provision(server="BrokerOne")
-        self.provision(server="BrokerTwo")
-        status, body = self.request("/v1/accounts", token=MENTOR_A)
+        self.provision(server="DerivSVG-Server")
+        self.provision(server="DerivSVG-Server-03")
+        status, body = self.request("/v1/accounts", token=BRIDGE_KEY)
         accounts = json.loads(body)["accounts"]
         self.assertEqual(len(accounts), 1)
-        self.assertEqual(accounts[0]["server"], "BrokerTwo")
-
-    def test_mentor_isolation(self):
-        self.provision(login="123456", token=MENTOR_A)
-        # Mentor B cannot see mentor A's account.
-        status, body = self.request("/v1/accounts", token=MENTOR_B)
-        self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body)["accounts"], [])
-        # Mentor B cannot query its status.
-        self.assertEqual(self.request("/v1/status?login=123456", token=MENTOR_B)[0], 404)
-        # Mentor B cannot send orders to it.
-        order = {"symbol": "EURUSD", "order_type": "BUY_STOP", "volume": 0.1,
-                 "entry_price": 1.09, "tp_enabled": False, "tp_distance": 0}
-        self.assertEqual(self.request("/v1/orders", "POST", MENTOR_B,
-                                      {"login": "123456", "orders": [order]},
-                                      {"Idempotency-Key": "isolation-01"})[0], 409)
-        # Mentor B cannot deactivate it.
-        self.assertEqual(self.request("/v1/accounts/123456/deactivate", "POST", MENTOR_B)[0], 404)
-
-    def test_order_lookup_is_scoped_to_owner(self):
-        self.provision()
-        order = {"symbol": "EURUSD", "order_type": "BUY_STOP", "volume": 0.1,
-                 "entry_price": 1.09, "tp_enabled": False, "tp_distance": 0}
-        _, created_body = self.request("/v1/orders", "POST", MENTOR_A,
-                                       {"login": "123456", "orders": [order]},
-                                       {"Idempotency-Key": "scope-01"})
-        order_id = json.loads(created_body)["orders"][0]["id"]
-        self.assertEqual(self.request(f"/v1/orders/{order_id}", token=MENTOR_B)[0], 404)
+        self.assertEqual(accounts[0]["server"], "DerivSVG-Server-03")
 
     def test_local_order_console_is_served(self):
         status, body = self.request("/client")
@@ -236,9 +207,9 @@ class BridgeTests(unittest.TestCase):
                                    "entry_price": 0, "tp_enabled": False, "tp_distance": 0})
 
     def test_account_validation(self):
-        self.assertEqual(self.request("/v1/accounts", "POST", MENTOR_A,
+        self.assertEqual(self.request("/v1/accounts", "POST", BRIDGE_KEY,
                                       {"login": "12", "password": "x", "server": "Demo"})[0], 400)
-        self.assertEqual(self.request("/v1/accounts", "POST", MENTOR_A,
+        self.assertEqual(self.request("/v1/accounts", "POST", BRIDGE_KEY,
                                       {"login": "123456", "password": "", "server": "Demo"})[0], 400)
         self.assertEqual(self.request("/v1/accounts", "POST", None,
                                       {"login": "123456", "password": "x", "server": "Demo"})[0], 401)

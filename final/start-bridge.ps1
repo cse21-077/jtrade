@@ -22,21 +22,23 @@ function Get-OrCreateProtectedToken([string]$Name) {
     }
 }
 
-# --- Terminal infrastructure (seed these once on the VPS, see README) ---
+# --- Terminal infrastructure (seed once on the VPS, see README) ---
+# Defaults match the runbook: master terminal at C:\MT5Terminals\JoeMoneyMaster.
+# Override any of them with environment variables before running this script.
 $terminalsDir    = if ($env:JOEMONEY_TERMINALS_DIR)    { $env:JOEMONEY_TERMINALS_DIR }    else { 'C:\MT5Terminals\JoeMoney' }
-$terminalMaster  = if ($env:JOEMONEY_TERMINAL_MASTER)  { $env:JOEMONEY_TERMINAL_MASTER }  else { '' }
-$eaSource        = if ($env:JOEMONEY_EA_SOURCE)        { $env:JOEMONEY_EA_SOURCE }        else { '' }
-$chartTemplate   = if ($env:JOEMONEY_CHART_TEMPLATE)   { $env:JOEMONEY_CHART_TEMPLATE }   else { '' }
+$terminalMaster  = if ($env:JOEMONEY_TERMINAL_MASTER)  { $env:JOEMONEY_TERMINAL_MASTER }  else { 'C:\MT5Terminals\JoeMoneyMaster' }
+$eaSource        = if ($env:JOEMONEY_EA_SOURCE)        { $env:JOEMONEY_EA_SOURCE }        else { 'C:\MT5Terminals\JoeMoneyMaster\MQL5\Experts\JoeMoneyBridgeEA.ex5' }
+$chartTemplate   = if ($env:JOEMONEY_CHART_TEMPLATE)   { $env:JOEMONEY_CHART_TEMPLATE }   else { 'C:\MT5Terminals\JoeMoneyMaster\MQL5\Profiles\Charts\Default\JoeMoney.chr' }
 
 New-Item -ItemType Directory -Force -Path $terminalsDir | Out-Null
-if (-not $terminalMaster -or -not (Test-Path (Join-Path $terminalMaster 'terminal64.exe'))) {
-    throw "JOEMONEY_TERMINAL_MASTER must point to the seeded portable MT5 folder containing terminal64.exe."
+if (-not (Test-Path (Join-Path $terminalMaster 'terminal64.exe'))) {
+    throw "Master terminal not found at $terminalMaster. Seed it per README section C (copy the MT5 install there and run terminal64.exe /portable once)."
 }
-if (-not $eaSource -or -not (Test-Path $eaSource)) {
-    throw "JOEMONEY_EA_SOURCE must point to the compiled JoeMoneyBridgeEA.ex5."
+if (-not (Test-Path $eaSource)) {
+    throw "Compiled EA not found at $eaSource. Copy JoeMoneyBridgeEA.mq5 into the master terminal's MQL5\Experts and compile with F7 in MetaEditor."
 }
-if (-not $chartTemplate -or -not (Test-Path $chartTemplate)) {
-    Write-Warning "JOEMONEY_CHART_TEMPLATE not set; terminals launch without an auto-attached EA. Attach the EA to a chart manually in each terminal."
+if (-not (Test-Path $chartTemplate)) {
+    Write-Warning "Chart template not found at $chartTemplate. Terminals launch without an auto-attached EA; attach the EA to a chart manually in each terminal (README step 8)."
 }
 
 $env:JOEMONEY_TERMINALS_DIR   = $terminalsDir
@@ -44,8 +46,11 @@ $env:JOEMONEY_TERMINAL_MASTER = $terminalMaster
 $env:JOEMONEY_EA_SOURCE       = $eaSource
 $env:JOEMONEY_CHART_TEMPLATE  = $chartTemplate
 
-$eaToken = Get-OrCreateProtectedToken 'ea-token'
-$env:JOEMONEY_EA_TOKEN = $eaToken
+# One shared key protects the bridge and identifies the EA. It is created once,
+# protected with Windows DPAPI for this Windows user, and reused on every start.
+$bridgeKey = Get-OrCreateProtectedToken 'bridge-key'
+$env:JOEMONEY_BRIDGE_KEY = $bridgeKey
+$env:JOEMONEY_EA_TOKEN = $bridgeKey
 $env:JOEMONEY_ALLOWED_ORIGIN = 'https://jtrade-seven.vercel.app'
 $env:JOEMONEY_HOST = '127.0.0.1'
 $env:JOEMONEY_PORT = '8765'
@@ -53,14 +58,9 @@ $env:JOEMONEY_DB_PATH = Join-Path $PSScriptRoot 'data\joemoney.sqlite3'
 New-Item -ItemType Directory -Force -Path (Split-Path $env:JOEMONEY_DB_PATH) | Out-Null
 
 Write-Host ''
-Write-Host 'JoeMoney multi-account bridge is starting.' -ForegroundColor Green
-Write-Host 'EA token (set once inside the JoeMoney.chr template inputs):' -ForegroundColor Yellow
-Write-Host $eaToken
-Write-Host ''
-
-$mentorToken = & python -c "import bridge; print(bridge.ensure_default_mentor())"
-Write-Host 'Mentor token (paste into the PWA MT5 screen):' -ForegroundColor Yellow
-Write-Host $mentorToken
+Write-Host 'JoeMoney bridge is starting.' -ForegroundColor Green
+Write-Host 'Bridge key (bake into the PWA as VITE_JOEMONEY_BRIDGE_KEY in Vercel, and as the EA token in the JoeMoney.chr inputs):' -ForegroundColor Yellow
+Write-Host $bridgeKey
 Write-Host ''
 Write-Host 'Re-launching terminals for active accounts that are not running...' -ForegroundColor DarkGray
 & python -c "import bridge; bridge.reconcile_on_boot()"

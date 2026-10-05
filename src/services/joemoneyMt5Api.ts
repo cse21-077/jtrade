@@ -67,7 +67,8 @@ export interface Mt5OrderBatch {
 
 const apiBaseUrl = (import.meta.env.VITE_JOEMONEY_API_URL as string | undefined)?.replace(/\/+$/, '') ?? '';
 
-const MENTOR_TOKEN_ENV = (import.meta.env.VITE_JOEMONEY_MENTOR_TOKEN as string | undefined) ?? '';
+const MENTOR_TOKEN_ENV = (import.meta.env.VITE_JOEMONEY_BRIDGE_KEY as string | undefined) ?? '';
+const LEGACY_TOKEN_ENV = (import.meta.env.VITE_JOEMONEY_MENTOR_TOKEN as string | undefined) ?? '';
 const TOKEN_STORAGE_KEY = 'joemoney-mentor-token';
 const ACCOUNT_STORAGE_KEY = 'joemoney-mt5-account';
 
@@ -77,7 +78,7 @@ export interface StoredMt5Account {
 }
 
 export const getMentorToken = (): string =>
-  MENTOR_TOKEN_ENV.trim() || window.sessionStorage.getItem(TOKEN_STORAGE_KEY) || '';
+  MENTOR_TOKEN_ENV.trim() || LEGACY_TOKEN_ENV.trim() || window.sessionStorage.getItem(TOKEN_STORAGE_KEY) || '';
 
 export const getStoredMt5Account = (): StoredMt5Account | null => {
   try {
@@ -102,7 +103,7 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
     throw new Error('The VPS API URL must use HTTPS. Point VITE_JOEMONEY_API_URL at the Caddy-served domain.');
   }
   if (!token.trim()) {
-    throw new Error('Enter the mentor token printed by the VPS bridge window.');
+    throw new Error('Enter the bridge key printed by start-bridge.ps1 on the VPS (or bake VITE_JOEMONEY_BRIDGE_KEY into the build).');
   }
 
   const response = await fetch(`${apiBaseUrl}${path}`, {

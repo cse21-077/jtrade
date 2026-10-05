@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Loader2, Lock, Server, UserRound, X } from 'lucide-react';
 import { getMentorToken, registerMt5Account, storeMt5Account, StoredMt5Account } from '../services/joemoneyMt5Api';
 
-const DERIV_SERVERS = ['DerivSVG-Demo', 'DerivSVG-Server', 'DerivSVG-Server-02', 'DerivSVG-Server-03'];
+const DERIV_SERVERS = ['Deriv-Demo','DerivSVG-Demo', 'DerivSVG-Server', 'DerivSVG-Server-02', 'DerivSVG-Server-03'];
 
 interface Mt5CredentialsModalProps {
   onClose: () => void;
@@ -14,9 +14,11 @@ export const Mt5CredentialsModal: React.FC<Mt5CredentialsModalProps> = ({ onClos
   const [password, setPassword] = useState('');
   const [serverChoice, setServerChoice] = useState(DERIV_SERVERS[0]);
   const [customServer, setCustomServer] = useState('');
+  const [manualToken, setManualToken] = useState('');
   const [error, setError] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
 
+  const tokenConfigured = Boolean(getMentorToken());
   const server = serverChoice === 'Custom' ? customServer.trim() : serverChoice;
 
   const handleConnect = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -35,10 +37,13 @@ export const Mt5CredentialsModal: React.FC<Mt5CredentialsModalProps> = ({ onClos
       setError('Choose a Deriv server or enter a custom one.');
       return;
     }
-    const mentorToken = getMentorToken();
+    const mentorToken = getMentorToken() || manualToken.trim();
     if (!mentorToken) {
-      setError('The bridge mentor token is not configured for this app build.');
+      setError('Enter the bridge key once — it is printed by start-bridge.ps1 on the VPS.');
       return;
+    }
+    if (!tokenConfigured) {
+      window.sessionStorage.setItem('joemoney-mentor-token', mentorToken);
     }
 
     setIsConnecting(true);
@@ -134,6 +139,21 @@ export const Mt5CredentialsModal: React.FC<Mt5CredentialsModalProps> = ({ onClos
                 onChange={(event) => setCustomServer(event.target.value)}
                 className="h-11 w-full rounded-xl border border-neutral-700 bg-neutral-900 px-3 font-mono text-sm text-white outline-none focus:border-emerald-500"
                 placeholder="e.g. BrokerName-Server01"
+              />
+            </label>
+          )}
+
+          {!tokenConfigured && (
+            <label className="grid gap-1.5 text-xs font-semibold text-neutral-300">
+              Bridge key <span className="font-normal text-neutral-500">(asked once; not needed in production builds)</span>
+              <input
+                required
+                type="password"
+                autoComplete="off"
+                value={manualToken}
+                onChange={(event) => setManualToken(event.target.value)}
+                className="h-11 w-full rounded-xl border border-neutral-700 bg-neutral-900 px-3 font-mono text-sm text-white outline-none focus:border-emerald-500"
+                placeholder="Paste the bridge key printed on the VPS"
               />
             </label>
           )}
