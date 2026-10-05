@@ -9,58 +9,14 @@ import { BottomNavBar, AppTab } from './components/BottomNavBar';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { Mt5AccountsScreen } from './components/Mt5AccountsScreen';
 import { derivService } from './services/derivWs';
+import { getStoredMt5Account, StoredMt5Account } from './services/joemoneyMt5Api';
 import { DerivAccount, MarketSymbol, PlacedOrder, TradeNotice } from './types/trading';
 import { CheckCircle2, CircleAlert, X } from 'lucide-react';
 
-const SYMBOLS: MarketSymbol[] = [
-  {
-    symbol: '1HZ100V',
-    displayName: 'Volatility 100 (24/7)',
-    category: 'Synthetics',
-    decimals: 2,
-    minLot: 0.1,
-    lotStep: 0.1,
-    defaultPrice: 1420.5,
-  },
-  {
-    symbol: '1HZ75V',
-    displayName: 'Volatility 75 (24/7)',
-    category: 'Synthetics',
-    decimals: 2,
-    minLot: 0.01,
-    lotStep: 0.01,
-    defaultPrice: 890.25,
-  },
-  {
-    symbol: 'frxXAUUSD',
-    displayName: 'Gold / USD',
-    category: 'Metals',
-    decimals: 2,
-    minLot: 0.01,
-    lotStep: 0.01,
-    defaultPrice: 2653.0,
-  },
-  {
-    symbol: 'cryBTCUSD',
-    displayName: 'Bitcoin / USD (24/7)',
-    category: 'Crypto',
-    decimals: 2,
-    minLot: 0.01,
-    lotStep: 0.01,
-    defaultPrice: 65420.0,
-  },
-  {
-    symbol: 'frxEURUSD',
-    displayName: 'EUR / USD',
-    category: 'Forex',
-    decimals: 5,
-    minLot: 0.01,
-    lotStep: 0.01,
-    defaultPrice: 1.085,
-  },
-];
+const SYMBOLS: MarketSymbol[] = SYMBOL_CATALOG;
 
 import { PWAInstallGate } from './components/PWAInstallGate';
+import { SYMBOL_CATALOG } from './data/symbols';
 
 const checkIsStandalone = () => {
   if (typeof window === 'undefined') return false;
@@ -92,6 +48,7 @@ export default function App() {
   }, []);
 
   const [account, setAccount] = useState<DerivAccount>(derivService.getAccount());
+  const [mt5Account, setMt5Account] = useState<StoredMt5Account | null>(() => getStoredMt5Account());
   const [selectedSymbol, setSelectedSymbol] = useState<MarketSymbol>(SYMBOLS[0]);
   const [spotPrice, setSpotPrice] = useState<number>(1420.5);
   const [orders, setOrders] = useState<PlacedOrder[]>([]);
@@ -209,6 +166,12 @@ export default function App() {
     setActiveTab('home');
   };
 
+  const handleMt5Connected = (mt5: StoredMt5Account) => {
+    setMt5Account(mt5);
+    setShowSplash(false);
+    setActiveTab('home');
+  };
+
   const handleDisconnect = () => {
     derivService.clearToken();
     setAccount(derivService.getAccount());
@@ -237,6 +200,7 @@ export default function App() {
       ) : showSplash ? (
         <SplashScreen
           onConnected={handleSplashConnected}
+          onMt5Connected={handleMt5Connected}
         />
       ) : (
         <div className="w-full max-w-md mx-auto min-h-screen bg-white flex flex-col relative">
@@ -248,6 +212,7 @@ export default function App() {
                 account={account}
                 spotPrice={spotPrice}
                 selectedSymbol={selectedSymbol}
+                mt5Account={mt5Account}
                 onDeployOrder={(order) => setOrders((prev) => [order, ...prev])}
                 onTradeNotice={setTradeNotice}
               />

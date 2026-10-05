@@ -2,12 +2,15 @@ import React, { useState } from 'react';
 import { DerivAccount, MarketSymbol, PlacedOrder, TradeNotice } from '../types/trading';
 import { Zap, Loader2 } from 'lucide-react';
 import { MascotHead } from './MascotHead';
+import { Mt5StatusCard } from './Mt5StatusCard';
 import { derivService } from '../services/derivWs';
+import { StoredMt5Account } from '../services/joemoneyMt5Api';
 
 interface HomeScreenProps {
   account: DerivAccount;
   spotPrice: number;
   selectedSymbol: MarketSymbol;
+  mt5Account?: StoredMt5Account | null;
   onDeployOrder?: (order: PlacedOrder) => void;
   onTradeNotice: (notice: TradeNotice) => void;
 }
@@ -16,6 +19,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   account,
   spotPrice,
   selectedSymbol,
+  mt5Account,
   onDeployOrder,
   onTradeNotice,
 }) => {
@@ -88,6 +92,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         <div className="flex justify-center">
           <MascotHead status="success" size={140} />
         </div>
+
+        {mt5Account && <Mt5StatusCard account={mt5Account} />}
 
         <div className="bg-[#18181b] rounded-2xl p-5 text-white space-y-4 text-center">
           <div className="space-y-1">

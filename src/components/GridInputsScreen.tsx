@@ -20,6 +20,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { derivService } from '../services/derivWs';
+import { SymbolSearchSelect } from './SymbolSearchSelect';
 
 interface GridInputsScreenProps {
   account: DerivAccount;
@@ -234,26 +235,12 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
         </div>
       </div>
 
-      {/* Market Selector Chips */}
-      <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
-        {symbols.map((sym) => {
-          const isSelected = selectedSymbol.symbol === sym.symbol;
-          return (
-            <button
-              key={sym.symbol}
-              type="button"
-              onClick={() => onSelectSymbol(sym)}
-              className={`px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition cursor-pointer ${
-                isSelected
-                  ? 'bg-[#18181b] text-white shadow-xs'
-                  : 'bg-[#f4f5f7] text-slate-700 hover:bg-slate-200'
-              }`}
-            >
-              {sym.displayName.split(' ')[0]}
-            </button>
-          );
-        })}
-      </div>
+      {/* Searchable Market Selector */}
+      <SymbolSearchSelect
+        symbols={symbols}
+        selectedSymbol={selectedSymbol}
+        onSelect={onSelectSymbol}
+      />
 
       <div className="grid grid-cols-2 gap-2 text-xs font-bold">
         <button type="button" onClick={() => setTradeAction('BUY_MARKET')} className={`py-3 rounded-xl flex items-center justify-center gap-1.5 ${tradeAction === 'BUY_MARKET' ? 'bg-emerald-600 text-white' : 'bg-emerald-50 text-emerald-800'}`}>

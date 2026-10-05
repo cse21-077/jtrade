@@ -103,7 +103,7 @@ export interface DerivOptionsAccount {
 export interface MarketSymbol {
   symbol: string;
   displayName: string;
-  category: 'Metals' | 'Synthetics' | 'Forex' | 'Crypto';
+  category: 'Metals' | 'Synthetics' | 'Forex' | 'Crypto' | 'Custom';
   decimals: number;
   minLot: number;
   lotStep: number;

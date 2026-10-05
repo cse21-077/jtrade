@@ -1,19 +1,24 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowRight, Loader2, ShieldCheck, Wallet } from 'lucide-react';
+import { ArrowRight, CandlestickChart, Loader2, ShieldCheck, Wallet } from 'lucide-react';
 import { DerivAccount, DerivOptionsAccount } from '../types/trading';
 import { derivService } from '../services/derivWs';
 import { beginDerivOAuth, exchangeDerivOAuthCode } from '../services/derivOAuth';
+import { getStoredMt5Account, StoredMt5Account } from '../services/joemoneyMt5Api';
+import { Mt5CredentialsModal } from './Mt5CredentialsModal';
 import { MascotHead } from './MascotHead';
 
 interface SplashScreenProps {
   onConnected: (account: DerivAccount) => void;
+  onMt5Connected: (account: StoredMt5Account) => void;
 }
 
-export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
+export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected, onMt5Connected }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [optionsAccounts, setOptionsAccounts] = useState<DerivOptionsAccount[] | null>(null);
   const [connectingAccountId, setConnectingAccountId] = useState<string | null>(null);
+  const [showMt5Modal, setShowMt5Modal] = useState(false);
+  const [storedMt5Account, setStoredMt5Account] = useState<StoredMt5Account | null>(() => getStoredMt5Account());
   const callbackStarted = useRef(false);
 
   useEffect(() => {
@@ -81,6 +86,12 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
 
   const isCallback = window.location.pathname === '/oauth/callback';
 
+  const handleMt5ModalConnected = (account: StoredMt5Account) => {
+    setStoredMt5Account(account);
+    setShowMt5Modal(false);
+    onMt5Connected(account);
+  };
+
   return (
     <div className="min-h-screen bg-white flex flex-col justify-center py-6 px-4 sm:px-6 max-w-md w-full mx-auto font-sans select-none space-y-4">
       <div className="my-3 rounded-[32px] p-4 flex flex-col items-center justify-center border border-pink-100/60 bg-[#fdf0f4] shadow-xs">
@@ -142,18 +153,37 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
             className="w-full py-3 rounded-xl bg-white hover:bg-neutral-100 text-slate-900 font-extrabold text-xs flex items-center justify-center gap-2 transition disabled:opacity-50"
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4 text-emerald-600" />}
-            <span>{loading ? 'Connecting securely...' : 'Continue with Deriv'}</span>
+            <span>{loading ? 'Connecting securely...' : 'Continue to Deriv (Options trading)'}</span>
             {!loading && <ArrowRight className="w-3.5 h-3.5" />}
           </button>
         )}
-        <a
-          href="/mt5"
-          className="flex w-full items-center justify-center gap-2 rounded-xl border border-neutral-600 py-3 text-xs font-bold text-neutral-200 transition hover:bg-white/10"
-        >
-          <ArrowRight className="h-3.5 w-3.5" />
-          Open VPS MT5 accounts
-        </a>
+        {storedMt5Account ? (
+          <button
+            type="button"
+            onClick={() => onMt5Connected(storedMt5Account)}
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-600/60 bg-emerald-500/10 py-3 text-xs font-bold text-emerald-200 transition hover:bg-emerald-500/20"
+          >
+            <CandlestickChart className="h-3.5 w-3.5" />
+            MT5 dashboard · {storedMt5Account.login}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setShowMt5Modal(true)}
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-neutral-600 py-3 text-xs font-bold text-neutral-200 transition hover:bg-white/10"
+          >
+            <CandlestickChart className="h-3.5 w-3.5" />
+            MT5 Credentials
+          </button>
+        )}
       </div>
+
+      {showMt5Modal && (
+        <Mt5CredentialsModal
+          onClose={() => setShowMt5Modal(false)}
+          onConnected={handleMt5ModalConnected}
+        />
+      )}
     </div>
   );
 };

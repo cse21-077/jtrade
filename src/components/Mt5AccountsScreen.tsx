@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Activity, ArrowLeft, Loader2, Plus, Radio, ShieldAlert, Trash2 } from 'lucide-react';
 import {
   deactivateMt5Account,
+  getMentorToken,
   getMt5BridgeHealth,
+  getStoredMt5Account,
   listMt5Accounts,
   Mt5Account,
   Mt5BridgeHealth,
@@ -23,17 +25,16 @@ const ORDER_TYPES: Array<{ value: Mt5OrderType; label: string }> = [
   { value: 'SELL_STOP', label: 'Sell stop' },
 ];
 
-const TOKEN_STORAGE_KEY = 'joemoney-mentor-token';
 const wait = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
 const accountIsLive = (account: Mt5Account) =>
   account.is_active && account.terminal_running && account.ea_connected;
 
 export const Mt5AccountsScreen: React.FC = () => {
-  const [token, setToken] = useState(() => window.sessionStorage.getItem(TOKEN_STORAGE_KEY) ?? '');
+  const [token, setToken] = useState(() => getMentorToken());
   const [health, setHealth] = useState<Mt5BridgeHealth | null>(null);
   const [accounts, setAccounts] = useState<Mt5Account[]>([]);
-  const [selectedLogin, setSelectedLogin] = useState('');
+  const [selectedLogin, setSelectedLogin] = useState(() => getStoredMt5Account()?.login ?? '');
   const [newLogin, setNewLogin] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newServer, setNewServer] = useState('');
@@ -67,7 +68,7 @@ export const Mt5AccountsScreen: React.FC = () => {
 
   useEffect(() => {
     if (!token) return;
-    window.sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
+    window.sessionStorage.setItem('joemoney-mentor-token', token);
     void refreshAccounts(token);
     pollTimer.current = window.setInterval(() => void refreshAccounts(token), 5000);
     return () => {
@@ -283,7 +284,10 @@ export const Mt5AccountsScreen: React.FC = () => {
             )}
             <form onSubmit={submitOrders} className="grid grid-cols-2 gap-3">
               <label className="col-span-2 grid gap-1.5 text-xs font-semibold text-slate-700">Broker symbol
-                <input required maxLength={64} value={symbol} onChange={(event) => setSymbol(event.target.value)} className="h-11 rounded-md border border-slate-300 bg-white px-3 font-mono text-sm" />
+                <input required maxLength={64} list="deriv-mt5-symbols" value={symbol} onChange={(event) => setSymbol(event.target.value)} className="h-11 rounded-md border border-slate-300 bg-white px-3 font-mono text-sm" placeholder="Type to search Deriv MT5 symbols…" />
+                <datalist id="deriv-mt5-symbols">
+                  {['Volatility 10 Index', 'Volatility 25 Index', 'Volatility 50 Index', 'Volatility 75 Index', 'Volatility 100 Index', 'Volatility 10 (1s) Index', 'Volatility 25 (1s) Index', 'Volatility 50 (1s) Index', 'Volatility 75 (1s) Index', 'Volatility 100 (1s) Index', 'Boom 500 Index', 'Boom 1000 Index', 'Crash 500 Index', 'Crash 1000 Index', 'Jump 10 Index', 'Jump 25 Index', 'Jump 50 Index', 'Jump 75 Index', 'Jump 100 Index', 'Step Index', 'XAUUSD', 'EURUSD', 'GBPUSD', 'USDJPY', 'BTCUSD', 'ETHUSD'].map((name) => <option key={name} value={name} />)}
+                </datalist>
               </label>
               <label className="col-span-2 grid gap-1.5 text-xs font-semibold text-slate-700">Order type
                 <select value={orderType} onChange={(event) => setOrderType(event.target.value as Mt5OrderType)} className="h-11 rounded-md border border-slate-300 bg-white px-3 text-sm">

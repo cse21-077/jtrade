@@ -31,7 +31,7 @@ void OnTimer()
       SendStatus();
       g_last_status_ms = GetTickCount64();
    }
-   if(!TerminalInfoInteger(TERMINAL_CONNECTED))
+   if(!TerminalInfoInteger(TERMINAL_CONNECTED) || AccountInfoInteger(ACCOUNT_LOGIN) <= 0)
       return;
    PollBridge();
 }
@@ -232,9 +232,10 @@ void SendResult(const string id, const bool placed, const ulong ticket, const st
 void SendStatus()
 {
    string login = IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN));
-   string message = TerminalInfoInteger(TERMINAL_CONNECTED) ? "MT5 connected" : "MT5 disconnected";
+   bool authorized = TerminalInfoInteger(TERMINAL_CONNECTED) && AccountInfoInteger(ACCOUNT_LOGIN) > 0;
+   string message = authorized ? "MT5 login successful" : "MT5 disconnected or login failed";
    string body = "{\"login\":\"" + login + "\",\"connected\":" +
-                 (TerminalInfoInteger(TERMINAL_CONNECTED) ? "true" : "false") +
+                 (authorized ? "true" : "false") +
                  ",\"message\":\"" + message + "\"}";
    string response;
    int status;

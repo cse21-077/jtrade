@@ -67,6 +67,33 @@ export interface Mt5OrderBatch {
 
 const apiBaseUrl = (import.meta.env.VITE_JOEMONEY_API_URL as string | undefined)?.replace(/\/+$/, '') ?? '';
 
+const MENTOR_TOKEN_ENV = (import.meta.env.VITE_JOEMONEY_MENTOR_TOKEN as string | undefined) ?? '';
+const TOKEN_STORAGE_KEY = 'joemoney-mentor-token';
+const ACCOUNT_STORAGE_KEY = 'joemoney-mt5-account';
+
+export interface StoredMt5Account {
+  login: string;
+  server: string;
+}
+
+export const getMentorToken = (): string =>
+  MENTOR_TOKEN_ENV.trim() || window.sessionStorage.getItem(TOKEN_STORAGE_KEY) || '';
+
+export const getStoredMt5Account = (): StoredMt5Account | null => {
+  try {
+    const raw = window.localStorage.getItem(ACCOUNT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as StoredMt5Account;
+    return typeof parsed.login === 'string' && typeof parsed.server === 'string' ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+export const storeMt5Account = (account: StoredMt5Account) => {
+  window.localStorage.setItem(ACCOUNT_STORAGE_KEY, JSON.stringify(account));
+};
+
 async function request<T>(path: string, token: string, init?: RequestInit): Promise<T> {
   if (!apiBaseUrl) {
     throw new Error('The JoeMoney VPS API URL is not configured in the PWA build (VITE_JOEMONEY_API_URL).');

@@ -78,7 +78,7 @@ response means "accepted by the bridge", not "executed" — confirm trades in MT
 - `GET /v1/orders/{id}` (mentor): order status, scoped to the owning mentor.
 - `GET /v1/commands/next?login=...` (EA): atomically claims the oldest queued command for that login; payload is the 7-field pipe-delimited line `id|symbol|order_type|volume|entry_price|tp_enabled|tp_distance`.
 - `POST /v1/commands/{id}/result` (EA): `placed`/`rejected` acknowledgement with ticket and message.
-- `POST /v1/terminal/status` (EA): per-login connection heartbeat; `GET /v1/status?login=` (mentor) reads it.
+- `POST /v1/terminal/status` (EA): per-login heartbeat. `connected=true` means the terminal is online **and** the account login succeeded; a failed login never produces an authorized heartbeat for the registered login (it is refused), so the PWA's "pending" state flips to "connected" only after a real MT5 login. `GET /v1/status?login=` (mentor) reads it.
 
 ## Warnings
 
