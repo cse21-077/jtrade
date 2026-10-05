@@ -147,11 +147,11 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onConnected }) => {
           </button>
         )}
         <a
-          href="/mt5-demo"
+          href="/mt5"
           className="flex w-full items-center justify-center gap-2 rounded-xl border border-neutral-600 py-3 text-xs font-bold text-neutral-200 transition hover:bg-white/10"
         >
           <ArrowRight className="h-3.5 w-3.5" />
-          Open VPS MT5 demo tester
+          Open VPS MT5 accounts
         </a>
       </div>
     </div>

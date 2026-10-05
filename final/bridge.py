@@ -1,4 +1,10 @@
-"""Local JoeMoney MT5 command bridge. Uses only the Python standard library."""
+"""JoeMoney MT5 command bridge: multi-account edition. Uses only the Python standard library.
+
+Mentors register MT5 accounts (login/password/server) over HTTPS; the bridge stores
+credentials in the local SQLite database, launches portable MT5 terminals with startup.ini auto-login,
+and queues orders per account. The JoeMoney EA inside each terminal polls locally,
+claims its account's commands, and executes them in MT5.
+"""
 
 from __future__ import annotations
 
@@ -18,17 +24,19 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
+import terminal_manager as tm
+
 ROOT = Path(__file__).resolve().parent
 DB_PATH = Path(os.environ.get("JOEMONEY_DB_PATH", ROOT / "joemoney.sqlite3"))
-CLIENT_TOKEN = os.environ.get("JOEMONEY_CLIENT_TOKEN", "")
 EA_TOKEN = os.environ.get("JOEMONEY_EA_TOKEN", "")
-MT5_LOGIN = os.environ.get("JOEMONEY_MT5_LOGIN", "")
 ALLOWED_ORIGIN = os.environ.get("JOEMONEY_ALLOWED_ORIGIN", "http://localhost:3000")
 MAX_BATCH_SIZE = 100
 ORDER_TYPES = {
     "MARKET_BUY", "MARKET_SELL", "BUY_LIMIT", "SELL_LIMIT", "BUY_STOP", "SELL_STOP"
 }
 SYMBOL_RE = re.compile(r"^[A-Za-z0-9._ -]{1,64}$")
+LOGIN_RE = re.compile(r"^\d{4,20}$")
+HEARTBEAT_STALE_SEC = 30
 
 
 def connect_db(path: Path | None = None) -> sqlite3.Connection:
@@ -39,6 +47,8 @@ def connect_db(path: Path | None = None) -> sqlite3.Connection:
     connection.execute(
         """CREATE TABLE IF NOT EXISTS orders (
             id TEXT PRIMARY KEY,
+            login TEXT NOT NULL,
+            mentor_token TEXT NOT NULL,
             symbol TEXT NOT NULL,
             order_type TEXT NOT NULL,
             volume REAL NOT NULL,
@@ -52,6 +62,10 @@ def connect_db(path: Path | None = None) -> sqlite3.Connection:
             updated_at REAL NOT NULL
         )"""
     )
+    order_columns = {row[1] for row in connection.execute("PRAGMA table_info(orders)")}
+    if "login" not in order_columns:
+        connection.execute("ALTER TABLE orders ADD COLUMN login TEXT NOT NULL DEFAULT ''")
+        connection.execute("ALTER TABLE orders ADD COLUMN mentor_token TEXT NOT NULL DEFAULT ''")
     connection.execute(
         """CREATE TABLE IF NOT EXISTS batches (
             idempotency_key TEXT PRIMARY KEY,
@@ -66,6 +80,31 @@ def connect_db(path: Path | None = None) -> sqlite3.Connection:
             connected INTEGER NOT NULL,
             last_seen REAL NOT NULL,
             message TEXT NOT NULL DEFAULT ''
+        )"""
+    )
+    connection.execute(
+        """CREATE TABLE IF NOT EXISTS accounts (
+            login TEXT PRIMARY KEY,
+            password TEXT NOT NULL,
+            server TEXT NOT NULL,
+            folder_path TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL
+        )"""
+    )
+    connection.execute(
+        """CREATE TABLE IF NOT EXISTS mentors (
+            token TEXT PRIMARY KEY,
+            label TEXT NOT NULL DEFAULT '',
+            created_at REAL NOT NULL
+        )"""
+    )
+    connection.execute(
+        """CREATE TABLE IF NOT EXISTS mentor_accounts (
+            mentor_token TEXT NOT NULL,
+            login TEXT NOT NULL,
+            PRIMARY KEY (mentor_token, login)
         )"""
     )
     return connection
@@ -88,6 +127,36 @@ def auth_matches(header: str, expected: str) -> bool:
     if not expected or not header.startswith("Bearer "):
         return False
     return hmac.compare_digest(header[7:], expected)
+
+
+def mentor_for(header: str) -> str | None:
+    if not header.startswith("Bearer "):
+        return None
+    token = header[7:]
+    with db_session() as db:
+        row = db.execute("SELECT token FROM mentors WHERE token=?", (token,)).fetchone()
+    return row["token"] if row else None
+
+
+def mentor_owns(db: sqlite3.Connection, mentor: str, login: str) -> bool:
+    return db.execute(
+        "SELECT 1 FROM mentor_accounts WHERE mentor_token=? AND login=?", (mentor, login)
+    ).fetchone() is not None
+
+
+def validate_account(payload: object) -> dict:
+    if not isinstance(payload, dict):
+        raise ValueError("Account must be an object.")
+    login = str(payload.get("login", "")).strip()
+    password = str(payload.get("password", ""))
+    server = str(payload.get("server", "")).strip()
+    if not LOGIN_RE.fullmatch(login):
+        raise ValueError("login must be 4-20 digits.")
+    if not 1 <= len(password) <= 128:
+        raise ValueError("password must be 1-128 characters.")
+    if not 1 <= len(server) <= 128:
+        raise ValueError("server must be 1-128 characters.")
+    return {"login": login, "password": password, "server": server}
 
 
 def validate_order(item: object) -> dict:
@@ -129,8 +198,33 @@ def validate_order(item: object) -> dict:
     }
 
 
+def ensure_default_mentor() -> str:
+    """Create the default mentor token on first run and return it. Callers print it."""
+    with db_session() as db:
+        row = db.execute("SELECT token FROM mentors ORDER BY created_at LIMIT 1").fetchone()
+        if row:
+            return row["token"]
+        token = secrets.token_hex(24)
+        db.execute("INSERT INTO mentors(token,label,created_at) VALUES(?,?,?)", (token, "default", time.time()))
+    return token
+
+
+def reconcile_on_boot() -> None:
+    """Re-launch terminals for active accounts that are not running (pre-warm on boot)."""
+    running = tm.running_logins(ttl=0)
+    with db_session() as db:
+        rows = db.execute("SELECT * FROM accounts WHERE is_active=1").fetchall()
+    for row in rows:
+        if row["login"] in running:
+            print(f"[reconcile] {row['login']} already running")
+            continue
+        ok, message = tm.ensure_terminal(dict(row))
+        state = "OK" if ok else "FAILED"
+        print(f"[reconcile] {row['login']} -> {state}: {message}")
+
+
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "JoeMoneyBridge/1.0"
+    server_version = "JoeMoneyBridge/2.0"
 
     def log_message(self, fmt: str, *args: object) -> None:
         print(f"[{self.log_date_time_string()}] {fmt % args}")
@@ -160,6 +254,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
             raise ValueError("Request body must be between 1 byte and 256 KB.")
         return json.loads(self.rfile.read(length))
 
+    def _require_mentor(self) -> str | None:
+        return mentor_for(self.headers.get("Authorization", ""))
+
     def do_OPTIONS(self) -> None:
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", ALLOWED_ORIGIN)
@@ -180,37 +277,86 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
         if parsed.path == "/health":
-            return self._send(200, {"status": "ok", "service": "JoeMoney local MT5 bridge"})
+            return self._send(200, {"status": "ok", "service": "JoeMoney multi-account MT5 bridge"})
         if parsed.path == "/v1/status":
-            if not auth_matches(self.headers.get("Authorization", ""), CLIENT_TOKEN):
+            mentor = self._require_mentor()
+            if not mentor:
                 return self._send(401, {"error": "Unauthorized"})
+            login = parse_qs(parsed.query).get("login", [""])[0].strip()
+            now = time.time()
             with db_session() as db:
-                row = db.execute("SELECT connected,last_seen,message FROM terminal_status WHERE login=?", (MT5_LOGIN,)).fetchone()
-            return self._send(200, {
-                "configured_login": MT5_LOGIN or None,
-                "terminal_connected": bool(row and row["connected"] and time.time() - row["last_seen"] < 30),
-                "last_seen": row["last_seen"] if row else None,
-                "message": row["message"] if row else "Waiting for the JoeMoney EA heartbeat.",
-            })
+                if login:
+                    if not mentor_owns(db, mentor, login):
+                        return self._send(404, {"error": "Unknown account for this mentor token."})
+                    row = db.execute(
+                        "SELECT connected,last_seen,message FROM terminal_status WHERE login=?", (login,)
+                    ).fetchone()
+                    return self._send(200, {
+                        "login": login,
+                        "terminal_connected": bool(row and row["connected"] and now - row["last_seen"] < HEARTBEAT_STALE_SEC),
+                        "last_seen": row["last_seen"] if row else None,
+                        "message": row["message"] if row else "Waiting for the JoeMoney EA heartbeat.",
+                    })
+                count = db.execute("SELECT COUNT(*) AS c FROM accounts WHERE is_active=1").fetchone()["c"]
+            return self._send(200, {"status": "ok", "service": "JoeMoney multi-account MT5 bridge", "active_accounts": count})
+        if parsed.path == "/v1/accounts":
+            mentor = self._require_mentor()
+            if not mentor:
+                return self._send(401, {"error": "Unauthorized"})
+            running = tm.running_logins()
+            now = time.time()
+            with db_session() as db:
+                rows = db.execute(
+                    "SELECT a.* FROM accounts a JOIN mentor_accounts m ON m.login=a.login "
+                    "WHERE m.mentor_token=? ORDER BY a.created_at",
+                    (mentor,),
+                ).fetchall()
+                accounts = []
+                for row in rows:
+                    heartbeat = db.execute(
+                        "SELECT connected,last_seen,message FROM terminal_status WHERE login=?", (row["login"],)
+                    ).fetchone()
+                    accounts.append({
+                        "login": row["login"],
+                        "server": row["server"],
+                        "folder_path": row["folder_path"],
+                        "is_active": bool(row["is_active"]),
+                        "terminal_running": row["login"] in running,
+                        "ea_connected": bool(
+                            heartbeat and heartbeat["connected"] and now - heartbeat["last_seen"] < HEARTBEAT_STALE_SEC
+                        ),
+                        "last_seen": heartbeat["last_seen"] if heartbeat else None,
+                        "message": heartbeat["message"] if heartbeat else "Waiting for the JoeMoney EA heartbeat.",
+                    })
+            return self._send(200, {"accounts": accounts})
         match = re.fullmatch(r"/v1/orders/([0-9a-f-]+)", parsed.path)
         if match:
-            if not auth_matches(self.headers.get("Authorization", ""), CLIENT_TOKEN):
+            mentor = self._require_mentor()
+            if not mentor:
                 return self._send(401, {"error": "Unauthorized"})
             with db_session() as db:
-                row = db.execute("SELECT id,status,ticket,result_message,created_at,updated_at FROM orders WHERE id=?", (match.group(1),)).fetchone()
+                row = db.execute(
+                    "SELECT id,status,ticket,result_message,created_at,updated_at FROM orders WHERE id=? AND mentor_token=?",
+                    (match.group(1), mentor),
+                ).fetchone()
             if not row:
                 return self._send(404, {"error": "Unknown order."})
             return self._send(200, dict(row))
         if parsed.path == "/v1/commands/next":
             if not auth_matches(self.headers.get("Authorization", ""), EA_TOKEN):
                 return self._send(401, {"error": "Unauthorized"})
-            login = parse_qs(parsed.query).get("login", [""])[0]
-            if not MT5_LOGIN or login != MT5_LOGIN:
-                return self._send(403, {"error": "EA login does not match the configured local demo account."})
+            login = parse_qs(parsed.query).get("login", [""])[0].strip()
             now = time.time()
             with db_session() as db:
+                account = db.execute("SELECT is_active FROM accounts WHERE login=?", (login,)).fetchone()
+                if not account:
+                    return self._send(403, {"error": "EA login is not a registered JoeMoney account."})
+                if not account["is_active"]:
+                    return self._send(403, {"error": "MT5 account is deactivated."})
                 db.execute("BEGIN IMMEDIATE")
-                row = db.execute("SELECT * FROM orders WHERE status='queued' ORDER BY created_at LIMIT 1").fetchone()
+                row = db.execute(
+                    "SELECT * FROM orders WHERE status='queued' AND login=? ORDER BY created_at LIMIT 1", (login,)
+                ).fetchone()
                 if not row:
                     db.commit()
                     return self._send(204)
@@ -226,29 +372,103 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path == "/v1/orders":
-            if not auth_matches(self.headers.get("Authorization", ""), CLIENT_TOKEN):
+        if parsed.path == "/v1/accounts":
+            mentor = self._require_mentor()
+            if not mentor:
                 return self._send(401, {"error": "Unauthorized"})
-            if not MT5_LOGIN:
-                return self._send(503, {"error": "Set JOEMONEY_MT5_LOGIN to the demo account logged into MT5."})
+            try:
+                account = validate_account(self._read_json())
+            except (json.JSONDecodeError, ValueError, AttributeError) as error:
+                return self._send(400, {"error": str(error)})
+            now = time.time()
+            with db_session() as db:
+                existing = db.execute("SELECT * FROM accounts WHERE login=?", (account["login"],)).fetchone()
+                if existing:
+                    db.execute(
+                        "UPDATE accounts SET password=?,server=?,is_active=1,updated_at=? WHERE login=?",
+                        (account["password"], account["server"], now, account["login"]),
+                    )
+                    folder_path = existing["folder_path"]
+                else:
+                    used = {
+                        row[0] for row in db.execute(
+                            "SELECT folder_path FROM accounts WHERE folder_path IS NOT NULL AND folder_path != ''"
+                        )
+                    }
+                    try:
+                        slot = tm.assign_slot(used)
+                    except RuntimeError as error:
+                        return self._send(503, {"error": str(error)})
+                    folder_path = str(slot)
+                    db.execute(
+                        "INSERT INTO accounts(login,password,server,folder_path,is_active,created_at,updated_at) "
+                        "VALUES(?,?,?,?,1,?,?)",
+                        (account["login"], account["password"], account["server"], folder_path, now, now),
+                    )
+                db.execute(
+                    "INSERT OR IGNORE INTO mentor_accounts(mentor_token,login) VALUES(?,?)",
+                    (mentor, account["login"]),
+                )
+            launched, message = tm.ensure_terminal({
+                "login": account["login"],
+                "password": account["password"],
+                "server": account["server"],
+                "folder_path": folder_path,
+            })
+            return self._send(200, {
+                "login": account["login"],
+                "folder_path": folder_path,
+                "launched": launched,
+                "message": message,
+            })
+        match = re.fullmatch(r"/v1/accounts/(\d{4,20})/deactivate", parsed.path)
+        if match:
+            mentor = self._require_mentor()
+            if not mentor:
+                return self._send(401, {"error": "Unauthorized"})
+            login = match.group(1)
+            with db_session() as db:
+                if not mentor_owns(db, mentor, login):
+                    return self._send(404, {"error": "Unknown account for this mentor token."})
+                db.execute("UPDATE accounts SET is_active=0,updated_at=? WHERE login=?", (time.time(), login))
+            return self._send(200, {"status": "deactivated", "login": login})
+        if parsed.path == "/v1/orders":
+            mentor = self._require_mentor()
+            if not mentor:
+                return self._send(401, {"error": "Unauthorized"})
             try:
                 payload = self._read_json()
-                orders = payload.get("orders") if isinstance(payload, dict) else None
+                if not isinstance(payload, dict):
+                    raise ValueError("Request body must be an object.")
+                login = str(payload.get("login", "")).strip()
+                orders = payload.get("orders")
+                if not LOGIN_RE.fullmatch(login):
+                    raise ValueError("Provide a numeric MT5 login for the orders.")
                 if not isinstance(orders, list) or not 1 <= len(orders) <= MAX_BATCH_SIZE:
                     raise ValueError(f"orders must contain 1-{MAX_BATCH_SIZE} orders.")
                 validated = [validate_order(order) for order in orders]
             except (json.JSONDecodeError, ValueError, AttributeError) as error:
                 return self._send(400, {"error": str(error)})
+            with db_session() as db:
+                account = db.execute(
+                    "SELECT * FROM accounts WHERE login=? AND is_active=1", (login,)
+                ).fetchone()
+                if not account or not mentor_owns(db, mentor, login):
+                    return self._send(409, {"error": "Unknown or inactive MT5 account for this mentor token."})
             idempotency_key = self.headers.get("Idempotency-Key", "")
             if not re.fullmatch(r"[A-Za-z0-9._:-]{8,128}", idempotency_key):
                 return self._send(400, {"error": "Provide an Idempotency-Key (8-128 safe characters)."})
-            request_hash = hashlib.sha256(json.dumps(validated, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            request_hash = hashlib.sha256(
+                json.dumps({"login": login, "orders": validated}, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
             now = time.time()
             created = [{"id": str(uuid4()), "status": "queued"} for _ in validated]
             response_body = {"orders": created, "count": len(created), "replayed": False}
             with db_session() as db:
                 db.execute("BEGIN IMMEDIATE")
-                previous = db.execute("SELECT request_hash,response_json FROM batches WHERE idempotency_key=?", (idempotency_key,)).fetchone()
+                previous = db.execute(
+                    "SELECT request_hash,response_json FROM batches WHERE idempotency_key=?", (idempotency_key,)
+                ).fetchone()
                 if previous:
                     db.commit()
                     if previous["request_hash"] != request_hash:
@@ -257,11 +477,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     cached["replayed"] = True
                     return self._send(200, cached)
                 db.executemany(
-                    "INSERT INTO orders(id,symbol,order_type,volume,entry_price,tp_enabled,tp_distance,status,created_at,updated_at) "
-                    "VALUES(?,?,?,?,?,?,?,'queued',?,?)",
+                    "INSERT INTO orders(id,login,mentor_token,symbol,order_type,volume,entry_price,tp_enabled,tp_distance,status,created_at,updated_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,'queued',?,?)",
                     [
-                        (record["id"], order["symbol"], order["order_type"], order["volume"], order["entry_price"],
-                         int(order["tp_enabled"]), order["tp_distance"], now, now)
+                        (record["id"], login, mentor, order["symbol"], order["order_type"], order["volume"],
+                         order["entry_price"], int(order["tp_enabled"]), order["tp_distance"], now, now)
                         for record, order in zip(created, validated)
                     ],
                 )
@@ -269,6 +489,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     "INSERT INTO batches(idempotency_key,request_hash,response_json,created_at) VALUES(?,?,?,?)",
                     (idempotency_key, request_hash, json.dumps(response_body), now),
                 )
+            if login not in tm.running_logins():
+                threading.Thread(target=tm.ensure_terminal, args=(dict(account),), daemon=True).start()
             return self._send(202, response_body)
         match = re.fullmatch(r"/v1/commands/([0-9a-f-]+)/result", parsed.path)
         if match:
@@ -296,13 +518,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
             try:
                 status = self._read_json()
                 login = str(status.get("login", ""))
-                if not MT5_LOGIN or login != MT5_LOGIN:
-                    return self._send(403, {"error": "EA login does not match configured demo account."})
                 connected = bool(status.get("connected"))
                 message = str(status.get("message", ""))[:200]
             except (json.JSONDecodeError, ValueError, AttributeError) as error:
                 return self._send(400, {"error": str(error)})
             with db_session() as db:
+                known = db.execute("SELECT 1 FROM accounts WHERE login=?", (login,)).fetchone()
+                if not known:
+                    return self._send(403, {"error": "Heartbeat login is not a registered JoeMoney account."})
                 db.execute(
                     "INSERT INTO terminal_status(login,connected,last_seen,message) VALUES(?,?,?,?) "
                     "ON CONFLICT(login) DO UPDATE SET connected=excluded.connected,last_seen=excluded.last_seen,message=excluded.message",
@@ -313,16 +536,16 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    if len(CLIENT_TOKEN) < 32 or len(EA_TOKEN) < 32 or not MT5_LOGIN.isdigit():
-        raise SystemExit("Set JOEMONEY_CLIENT_TOKEN, JOEMONEY_EA_TOKEN, and JOEMONEY_MT5_LOGIN before starting.")
-    if secrets.compare_digest(CLIENT_TOKEN, EA_TOKEN):
-        raise SystemExit("Client and EA tokens must be different.")
+    if len(EA_TOKEN) < 32:
+        raise SystemExit("Set JOEMONEY_EA_TOKEN (32+ characters) before starting.")
     with db_session():
         pass
+    if os.environ.get("JOEMONEY_RECONCILE_ON_BOOT", "1") == "1":
+        reconcile_on_boot()
     host = os.environ.get("JOEMONEY_HOST", "127.0.0.1")
     port = int(os.environ.get("JOEMONEY_PORT", "8765"))
     server = ThreadingHTTPServer((host, port), BridgeHandler)
-    print(f"JoeMoney bridge listening at http://{host}:{port} for demo login {MT5_LOGIN}")
+    print("JoeMoney multi-account bridge listening at http://%s:%d" % (host, port))
     server.serve_forever()
 
 

@@ -1,58 +1,96 @@
-# JoeMoney MT5 Demo Bridge
+# JoeMoney Multi-Account MT5 Bridge
 
-This package supports a **single MT5 demo account** on a Windows VPS. Log into the demo account manually in MT5. The Vercel PWA's `/mt5-demo` screen sends orders through a temporary HTTPS tunnel to the bridge, which queues them in local SQLite; the EA polls locally and submits them inside MT5. Broker passwords are not collected by this test flow.
+This package runs the MT5 execution side of the JoeMoney PWA on a Windows VPS
+(178.238.234.68). Mentors register MT5 accounts (login/password/server) from the
+PWA's MT5 screen; the bridge stores them in a local SQLite database, starts one
+portable MT5 terminal per account (auto-login via `startup.ini`, EA pre-attached via
+a chart profile), and routes the mentor's order batches to the right terminal. The
+JoeMoney EA inside each terminal polls the bridge over loopback HTTP and submits
+orders inside MT5.
 
 ## What it supports
 
-- Market BUY/SELL and broker-held BUY_LIMIT, SELL_LIMIT, BUY_STOP, and SELL_STOP orders.
-- Multiple independent positions at a ladder level: send one order object per position. The bridge preserves every item; batch limit is 100.
-- Optional spot-based TP calculated from the broker quote immediately before MT5 submission: BUY uses current ask + distance; SELL uses current bid - distance. If that TP is not valid for the pending entry or violates broker stop distance, the EA rejects the order and reports the reason.
-- Client/EA bearer-token separation, single configured MT5 login, command state, and execution acknowledgements.
+- Many MT5 accounts, each in its own portable terminal under `C:\MT5Terminals\JoeMoney\SlotNNN`.
+- Per-mentor bearer tokens: a mentor can only see, trade, and deactivate accounts registered with their token.
+- Market BUY/SELL and broker-held BUY_LIMIT, SELL_LIMIT, BUY_STOP, SELL_STOP orders; one order object per position, up to 100 per batch, idempotent submission via `Idempotency-Key`.
+- Optional spot-based TP from the broker quote at execution time (BUY: ask + distance; SELL: bid - distance).
+- Terminal supervision: terminals are launched on registration, re-launched when orders arrive for a stopped terminal, and reconciled on bridge start (pre-warm on boot).
+- Explicit per-account connection status from the EA heartbeat — bridge or EA polling alone does not mean the broker connection is up.
 
-This is a private demo test path, not production-ready multi-user infrastructure. Do not use a live account. The demo token is entered at runtime in the PWA and is not compiled into its bundle, but it is still a shared bearer secret: only provide it to trusted testers and rotate it after testing. The bridge must remain bound to `127.0.0.1`; the tunnel provides the HTTPS public edge.
+## One-time VPS setup (Windows Server, MT5 installed)
 
-If you need each filled same-symbol trade to remain a separately visible position, the MT5 demo account must use **hedging** mode. On a netting account, MT5 can combine same-symbol fills into one net position even though the bridge sent multiple separate orders.
+1. **Seed the master terminal.** Create one clean portable MT5 folder (e.g.
+   `C:\MT5Terminals\JoeMoneyMaster`) with `terminal64.exe`, log in once so all
+   broker servers are cached, then log out. Set `JOEMONEY_TERMINAL_MASTER` to it.
+   New slots are cloned from this master.
+2. **Compile the EA.** Compile `JoeMoneyBridgeEA.mq5` in MetaEditor and set
+   `JOEMONEY_EA_SOURCE` to the resulting `.ex5`.
+3. **Create the chart template.** Start the master terminal, attach the compiled EA
+   to a chart with `BridgeUrl=http://127.0.0.1:8765` and the EA token you will use
+   (printed by `start-bridge.ps1`), enable Algo Trading, allow the URL in MT5
+   WebRequest settings, then save the chart profile: Charts > Save As, name it
+   `JoeMoney`, saved under `MQL5\Profiles\Charts\Default\JoeMoney.chr`. Set
+   `JOEMONEY_CHART_TEMPLATE` to that file. Every launched terminal opens this chart
+   with the EA already running. Until this file exists, terminals still launch and
+   log in, but the EA must be attached manually per terminal.
+4. **DNS + Caddy.** Point a domain (or free DuckDNS subdomain) A record at
+   178.238.234.68 — Let's Encrypt does not issue certificates for bare IPs. Put the
+   hostname in `Caddyfile` and run Caddy on the VPS. Firewall: allow 443 (and RDP
+   from your admin IP only); port 8765 must stay loopback.
+5. **PWA env.** Set `VITE_JOEMONEY_API_URL=https://bridge.<your-domain>` in Vercel
+   Production environment variables and redeploy.
 
-## Windows VPS Test
-
-Use Windows Server 2025 with MT5 installed. Copy only this `final` folder to a path such as `C:\JoeMoney\final`; do not copy the old `learn` examples. Install Python 3.10 or newer and the official Cloudflare `cloudflared.exe` binary (Cloudflare downloads: `https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/`). In MT5, log into the demo account manually, make sure it is connected, and note its numeric login. Compile `JoeMoneyBridgeEA.mq5` in MetaEditor, but do not attach it yet because the bridge generates the EA token on first start.
-
-Open an elevated firewall configuration only for RDP from your own IP. Do **not** open port `8765`. From the same Windows account that will run Python and MT5, open PowerShell in the copied folder and start the bridge:
+## Run
 
 ```powershell
 .\start-bridge.ps1
 ```
 
-Enter the MT5 demo login when prompted. On first start the script creates distinct client and EA tokens and protects their saved copies using Windows DPAPI for that Windows user. In MT5, attach the compiled EA to a chart on the matching demo account, set its `EaToken` to the printed EA token and `BridgeUrl` to `http://127.0.0.1:8765`, enable Algo Trading, and allow that URL in MT5 WebRequest settings. Restart the EA after changing inputs.
+The script loads/creates the DPAPI-protected EA token, prints the **mentor token**
+(paste it into the PWA MT5 screen) and the EA token (bake into `JoeMoney.chr`),
+re-launches any stopped terminals for active accounts, then starts the bridge at
+`http://127.0.0.1:8765` behind Caddy. Keep the window open.
 
-Open a second PowerShell window in the same folder and start a temporary HTTPS tunnel:
+## Test the bridge
 
-```powershell
-.\start-tunnel.ps1
-```
-
-Copy the `https://....trycloudflare.com` address printed by Cloudflare. In Vercel project settings, set the **Production** environment variable `VITE_JOEMONEY_API_URL` to that full HTTPS URL, then redeploy the PWA. For a local PWA build, set the same variable in `.env.local` before building. The bridge launcher allows browser requests only from `https://jtrade-seven.vercel.app`. If the Cloudflare Quick Tunnel restarts and produces a different URL, update the Vercel variable and redeploy.
-
-Once the new Vercel deployment is ready, open the installed PWA and choose **Open VPS MT5 demo tester** from the splash screen (or open `/mt5-demo`). Paste the client token printed by `start-bridge.ps1`, click **Check connection**, and confirm the correct MT5 demo login is reported before submitting a tiny test order. Use the broker's exact symbol and valid volume/price. Check the resulting ticket/status in both the PWA and MT5 Trade/Experts tabs.
-
-Keep both PowerShell windows open. The tunnel URL is temporary and should only be shared with testers. A random URL is not authentication; token validation is still required. This setup does not enroll MT5 credentials from the PWA, add per-client identities, or support several client accounts.
-
-## Test the Bridge
-
-Before moving it to the VPS, run the bridge unit tests locally:
+Before moving it to the VPS, run the unit tests locally (terminal launching and
+process detection are mocked):
 
 ```powershell
 python -m unittest discover -s final -v
 ```
 
-The HTTP response means “queued”, not “executed”. The PWA waits briefly for the EA acknowledgement; pending trades must still be confirmed in MT5. If the EA is offline, commands remain queued until it reconnects, so inspect the queue/account before restarting or resubmitting.
+## PWA flow
 
-## Protocol and constraints
+Open the installed PWA → **Open VPS MT5 accounts** (or `/mt5`) → paste the mentor
+token → **Check connection** → register an account (MT5 login, password, server).
+The VPS launches and logs in a terminal for it; the account list shows green when
+the terminal is up and the EA heartbeat is live. Select an account, build the order
+ladder, and queue. The PWA polls each order until the EA acknowledges it. A queued
+response means "accepted by the bridge", not "executed" — confirm trades in MT5.
 
-- `POST /v1/orders`: authenticated batch of orders; no account login can be selected by the caller.
-- `GET /v1/commands/next?login=...`: EA-only poll; command is atomically claimed before being returned.
-- EA poll payload is a seven-field pipe-delimited line: `id|symbol|order_type|volume|entry_price|tp_enabled|tp_distance`.
-- `POST /v1/commands/{id}/result`: EA acknowledgement with `placed` or `rejected`, ticket, and message.
-- `POST /v1/terminal/status` and `GET /v1/status`: terminal connection status comes from the EA's explicit MT5 connection report; bridge reachability or EA command polling alone does not mean the broker connection is up.
+## Protocol
 
-MetaEditor is required to compile the EA; Python tests do not compile MQL5. The Quick Tunnel is temporary testing transport only. Before production, replace the shared demo token with real JoeMoney user authentication and per-user account authorization, add encrypted per-account credential provisioning and isolated MT5 terminal sessions, add durable reconciliation for claims/acknowledgements, and implement administrative kill controls and monitoring.
+- `POST /v1/accounts` (mentor): `{login, password, server}` → provision/update account and launch its terminal. Passwords are stored in the local SQLite database (plaintext, per deployment decision) and are never returned.
+- `GET /v1/accounts` (mentor): account list with terminal/EA status, no secrets.
+- `POST /v1/accounts/{login}/deactivate` (mentor): stops trading for that account.
+- `POST /v1/orders` (mentor): `{login, orders:[...]}` with `Idempotency-Key`.
+- `GET /v1/orders/{id}` (mentor): order status, scoped to the owning mentor.
+- `GET /v1/commands/next?login=...` (EA): atomically claims the oldest queued command for that login; payload is the 7-field pipe-delimited line `id|symbol|order_type|volume|entry_price|tp_enabled|tp_distance`.
+- `POST /v1/commands/{id}/result` (EA): `placed`/`rejected` acknowledgement with ticket and message.
+- `POST /v1/terminal/status` (EA): per-login connection heartbeat; `GET /v1/status?login=` (mentor) reads it.
+
+## Warnings
+
+- **Do not use on live accounts until hardened.** Broker passwords are stored
+  unencrypted in `data\joemoney.sqlite3`; anyone with read access to the VPS or a
+  copy of the database can trade those accounts. Encryption at rest, real user
+  authentication, credential rotation, and administrative kill controls are listed
+  as production work in the original demo README and still apply.
+- The HTTP response means "queued", not "executed". If the EA is offline, commands
+  remain queued until it reconnects; inspect the queue/account before restarting or
+  resubmitting.
+- For multiple same-symbol fills to remain separate positions, the MT5 account must
+  use **hedging** mode; netting accounts combine fills.
+- MT5 first-run dialogs (LiveUpdate, news) can delay EA startup; queued orders wait
+  for the EA, and `start-bridge.ps1` reconciles terminals on every bridge start.

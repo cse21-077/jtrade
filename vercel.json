@@ -1,6 +1,7 @@
 {
   "rewrites": [
     { "source": "/oauth/callback", "destination": "/index.html" },
+    { "source": "/mt5", "destination": "/index.html" },
     { "source": "/mt5-demo", "destination": "/index.html" }
   ]
 }

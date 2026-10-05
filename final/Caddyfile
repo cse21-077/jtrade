@@ -1,0 +1,8 @@
+# Caddy serves the JoeMoney bridge over public HTTPS.
+# Prerequisites:
+#   1. A DNS A record for the hostname below pointing at 178.238.234.68.
+#   2. Firewall: allow 443 (and RDP from your admin IP only). Port 8765 must stay loopback.
+# Caddy obtains and renews the Let's Encrypt certificate automatically.
+bridge.your-domain.com {
+    reverse_proxy 127.0.0.1:8765
+}
