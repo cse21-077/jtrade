@@ -21,10 +21,12 @@ import {
 } from 'lucide-react';
 import { derivService } from '../services/derivWs';
 import { SymbolSearchSelect } from './SymbolSearchSelect';
+import { MT5_STALE_AFTER_SEC } from '../hooks/useMt5Prices';
 
 interface GridInputsScreenProps {
   account: DerivAccount;
   spotPrice: number;
+  mt5PriceAge?: number | null;
   selectedSymbol: MarketSymbol;
   onSelectSymbol: (sym: MarketSymbol) => void;
   symbols: MarketSymbol[];
@@ -37,6 +39,7 @@ type TradeAction = 'SELL_STOP' | 'SELL_LIMIT' | 'BUY_LIMIT' | 'BUY_STOP' | 'BUY_
 export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
   account,
   spotPrice,
+  mt5PriceAge = null,
   selectedSymbol,
   onSelectSymbol,
   symbols,
@@ -125,6 +128,18 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
   const totalOrders = ladderLevels.length * ordersPerLevel;
   const totalVolume = +(totalOrders * lotSize).toFixed(2);
   const endPrice = ladderLevels[ladderLevels.length - 1]?.price || startPrice;
+
+  const mt5Badge = mt5PriceAge !== null && (
+    <span
+      className={`px-1 py-0.5 rounded text-[8px] font-black tracking-widest ${
+        mt5PriceAge >= MT5_STALE_AFTER_SEC
+          ? 'bg-slate-300 text-slate-600'
+          : 'bg-sky-500 text-white'
+      }`}
+    >
+      MT5
+    </span>
+  );
 
   // Stepper handlers for lot size to avoid needing keyboard
   const changeLot = (delta: number) => {
@@ -230,8 +245,21 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
 
         {/* Live Spot Pill */}
         <div className="px-3 py-1.5 rounded-full bg-[#f4f5f7] text-slate-800 text-xs font-mono font-bold flex items-center gap-1.5 shrink-0">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          <span>Spot: {spotPrice.toFixed(selectedSymbol.decimals)}</span>
+          <span
+            className={`w-2 h-2 rounded-full animate-pulse ${
+              mt5PriceAge !== null && mt5PriceAge >= MT5_STALE_AFTER_SEC
+                ? 'bg-slate-400'
+                : 'bg-emerald-500'
+            }`}
+          />
+          <span
+            className={
+              mt5PriceAge !== null && mt5PriceAge >= MT5_STALE_AFTER_SEC ? 'text-slate-400' : ''
+            }
+          >
+            Spot: {spotPrice.toFixed(selectedSymbol.decimals)}
+          </span>
+          {mt5Badge}
         </div>
       </div>
 
@@ -323,8 +351,9 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
         <div>
           <div className="flex items-center justify-between text-xs mb-1">
             <label className="font-bold text-slate-900">First Order Price</label>
-            <span className="text-[11px] font-mono font-medium text-slate-400">
+            <span className="text-[11px] font-mono font-medium text-slate-400 flex items-center gap-1">
               Spot: {spotPrice.toFixed(selectedSymbol.decimals)}
+              {mt5Badge}
             </span>
           </div>
 

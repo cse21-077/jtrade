@@ -8,10 +8,12 @@ import {
   AlertCircle,
   ExternalLink,
 } from 'lucide-react';
+import { MT5_STALE_AFTER_SEC } from '../hooks/useMt5Prices';
 
 interface OrdersScreenProps {
   orders: PlacedOrder[];
   spotPrice: number;
+  mt5PriceAge?: number | null;
   onCancelOrder: (id: string) => void;
   onCancelAll: () => void;
   onClosePosition: (id: string) => void;
@@ -22,6 +24,7 @@ interface OrdersScreenProps {
 export const OrdersScreen: React.FC<OrdersScreenProps> = ({
   orders,
   spotPrice,
+  mt5PriceAge = null,
   onCancelOrder,
   onCancelAll,
   onClosePosition,
@@ -108,8 +111,30 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
       <div className="flex items-center justify-between pt-1">
         <div>
           <h2 className="text-xl font-black text-slate-900 tracking-tight">Active Market Positions</h2>
-          <p className="text-xs text-slate-400 font-mono mt-0.5">
-            Live Deriv Spot: <strong className="text-slate-900">{spotPrice.toFixed(2)}</strong>
+          <p className="text-xs text-slate-400 font-mono mt-0.5 flex items-center gap-1.5">
+            <span>
+              Live {mt5PriceAge !== null ? 'MT5' : 'Deriv'} Spot:{' '}
+              <strong
+                className={
+                  mt5PriceAge !== null && mt5PriceAge >= MT5_STALE_AFTER_SEC
+                    ? 'text-slate-400'
+                    : 'text-slate-900'
+                }
+              >
+                {spotPrice.toFixed(2)}
+              </strong>
+            </span>
+            {mt5PriceAge !== null && (
+              <span
+                className={`px-1 py-0.5 rounded text-[9px] font-black tracking-widest ${
+                  mt5PriceAge >= MT5_STALE_AFTER_SEC
+                    ? 'bg-slate-200 text-slate-500'
+                    : 'bg-sky-100 text-sky-700'
+                }`}
+              >
+                MT5
+              </span>
+            )}
           </p>
         </div>
 

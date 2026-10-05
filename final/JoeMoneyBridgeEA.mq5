@@ -6,12 +6,16 @@ input string BridgeUrl = "http://127.0.0.1:8765";
 input string EaToken = "SET_A_DISTINCT_EA_TOKEN";
 input int PollSeconds = 1;
 input int SlippagePoints = 20;
+input string ReportSymbols = "R_10,R_25,R_50,R_75,R_100,1HZ10V,1HZ25V,1HZ50V,1HZ75V,1HZ100V,BOOM500,BOOM1000,CRASH500,CRASH1000,JD10,JD25,JD50,JD75,JD100,XAUUSD,EURUSD,GBPUSD,USDJPY,AUDUSD,USDCAD,USDCHF,NZDUSD,BTCUSD,ETHUSD";
+input int ReportSeconds = 3;
 
 ulong g_last_status_ms = 0;
+ulong g_last_report_ms = 0;
+ulong g_last_report_warn_ms = 0;
 
 int OnInit()
 {
-   if(PollSeconds < 1 || StringLen(EaToken) < 32)
+   if(PollSeconds < 1 || ReportSeconds < 1 || StringLen(EaToken) < 32)
       return INIT_PARAMETERS_INCORRECT;
    EventSetTimer(PollSeconds);
    Print("JoeMoney EA ready. MT5 login: ", (long)AccountInfoInteger(ACCOUNT_LOGIN));
@@ -33,6 +37,11 @@ void OnTimer()
    }
    if(!TerminalInfoInteger(TERMINAL_CONNECTED) || AccountInfoInteger(ACCOUNT_LOGIN) <= 0)
       return;
+   if(GetTickCount64() - g_last_report_ms >= (ulong)ReportSeconds * 1000)
+   {
+      g_last_report_ms = GetTickCount64();
+      ReportPrices();
+   }
    PollBridge();
 }
 
@@ -240,4 +249,48 @@ void SendStatus()
    string response;
    int status;
    HttpRequest("POST", BridgeUrl + "/v1/terminal/status", body, response, status);
+}
+
+void ReportPrices()
+{
+   string names[];
+   ushort separator = StringGetCharacter(",", 0);
+   int count = StringSplit(ReportSymbols, separator, names);
+   if(count <= 0)
+      return;
+
+   string ticks = "";
+   int reported = 0;
+   for(int i = 0; i < count && reported < 200; i++)
+   {
+      string name = names[i];
+      StringTrimLeft(name);
+      StringTrimRight(name);
+      if(StringLen(name) == 0)
+         continue;
+      if(!SymbolSelect(name, true))
+         continue;
+      MqlTick tick;
+      if(!SymbolInfoTick(name, tick))
+         continue;
+      if(reported > 0)
+         ticks += ",";
+      ticks += "{\"symbol\":\"" + JsonEscape(name) + "\",\"bid\":" + DoubleToString(tick.bid, 8) +
+               ",\"ask\":" + DoubleToString(tick.ask, 8) + "}";
+      reported++;
+   }
+   if(reported == 0)
+      return;
+
+   string login = IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN));
+   string body = "{\"login\":\"" + login + "\",\"ticks\":[" + ticks + "]}";
+   string response;
+   int status;
+   if(!HttpRequest("POST", BridgeUrl + "/v1/prices", body, response, status))
+      return;
+   if(status != 200 && GetTickCount64() - g_last_report_warn_ms >= 60000)
+   {
+      g_last_report_warn_ms = GetTickCount64();
+      Print("JoeMoney price report failed, HTTP ", status, " ", response);
+   }
 }

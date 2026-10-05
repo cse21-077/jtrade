@@ -59,6 +59,19 @@ export interface Mt5QueuedOrder {
   result_message?: string | null;
 }
 
+export interface Mt5Price {
+  login: string;
+  symbol: string;
+  bid: number;
+  ask: number;
+  age_sec: number;
+}
+
+export interface Mt5PricesResponse {
+  prices: Mt5Price[];
+  now: number;
+}
+
 export interface Mt5OrderBatch {
   count: number;
   replayed: boolean;
@@ -154,3 +167,11 @@ export const queueMt5Orders = (token: string, login: string, orders: Mt5OrderReq
 
 export const getMt5Order = (token: string, orderId: string) =>
   request<Mt5QueuedOrder>(`/v1/orders/${encodeURIComponent(orderId)}`, token);
+
+export const getMt5Prices = (token: string, opts?: { login?: string; symbols?: string[] }) => {
+  const params = new URLSearchParams();
+  if (opts?.login) params.set('login', opts.login);
+  if (opts?.symbols && opts.symbols.length > 0) params.set('symbols', opts.symbols.join(','));
+  const query = params.toString();
+  return request<Mt5PricesResponse>(`/v1/prices${query ? `?${query}` : ''}`, token);
+};

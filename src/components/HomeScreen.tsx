@@ -1,90 +1,27 @@
-import React, { useState } from 'react';
-import { DerivAccount, MarketSymbol, PlacedOrder, TradeNotice } from '../types/trading';
-import { Zap, Loader2 } from 'lucide-react';
+import React from 'react';
+import { DerivAccount, MarketSymbol } from '../types/trading';
 import { MascotHead } from './MascotHead';
 import { Mt5StatusCard } from './Mt5StatusCard';
-import { derivService } from '../services/derivWs';
 import { StoredMt5Account } from '../services/joemoneyMt5Api';
+import { MT5_STALE_AFTER_SEC } from '../hooks/useMt5Prices';
 
 interface HomeScreenProps {
   account: DerivAccount;
   spotPrice: number;
   selectedSymbol: MarketSymbol;
+  mt5PriceAge?: number | null;
   mt5Account?: StoredMt5Account | null;
-  onDeployOrder?: (order: PlacedOrder) => void;
-  onTradeNotice: (notice: TradeNotice) => void;
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
   account,
   spotPrice,
   selectedSymbol,
+  mt5PriceAge = null,
   mt5Account,
-  onDeployOrder,
-  onTradeNotice,
 }) => {
-  const [isExecutingTest, setIsExecutingTest] = useState(false);
-
-  const handleTestMarketTrade = async () => {
-    setIsExecutingTest(true);
-
-    try {
-      const res = await derivService.executeRealTrade({
-        symbol: selectedSymbol.symbol,
-        direction: 'BUY',
-        lotSize: selectedSymbol.minLot,
-      });
-
-      if (res.success && res.contractId) {
-        onTradeNotice({
-          success: true,
-          message: `Market test opened on ${selectedSymbol.displayName}.`,
-          trades: [{
-            symbol: selectedSymbol.symbol,
-            direction: 'BUY',
-            price: spotPrice,
-            lotSize: selectedSymbol.minLot,
-            contractId: res.contractId,
-          }],
-        });
-
-        if (onDeployOrder) {
-          onDeployOrder({
-            id: `test-${Date.now()}`,
-            symbol: selectedSymbol.symbol,
-            direction: 'BUY',
-            orderType: 'MARKET_GRID',
-            price: spotPrice,
-            lotSize: selectedSymbol.minLot,
-            levelIndex: 1,
-            subIndex: 1,
-            status: 'FILLED',
-            derivContractId: res.contractId,
-            createdAt: Date.now(),
-            filledAt: Date.now(),
-          });
-        }
-      } else {
-        onTradeNotice({
-          success: false,
-          message: res.message || 'Trade execution failed on Deriv.',
-          errorMessage: res.message || 'Deriv did not open the trade.',
-          trades: [],
-        });
-      }
-    } catch (e: any) {
-      onTradeNotice({
-        success: false,
-        message: e?.message || 'Trade failed.',
-        errorMessage: e?.message || 'Trade failed.',
-        trades: [],
-      });
-    } finally {
-      setIsExecutingTest(false);
-    }
-  };
-
   const accountId = account.loginId || account.mt5Login || 'Demo-Account';
+  const mt5Degraded = mt5PriceAge !== null && mt5PriceAge >= MT5_STALE_AFTER_SEC;
 
   return (
     <div className="min-h-[calc(100dvh-1rem)] flex items-center justify-center px-4 pt-4 pb-24 font-sans select-none bg-white">
@@ -103,15 +40,32 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             </p>
           </div>
 
-          <button
-            type="button"
-            disabled={isExecutingTest}
-            onClick={handleTestMarketTrade}
-            className="w-full py-3 rounded-xl bg-white hover:bg-neutral-100 text-slate-900 font-extrabold text-xs flex items-center justify-center gap-2 transition disabled:opacity-50"
-          >
-            {isExecutingTest ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4 text-amber-500" />}
-            <span>{isExecutingTest ? 'Testing market...' : `Test market buy · ${selectedSymbol.displayName.split(' ')[0]}`}</span>
-          </button>
+          <div className="pt-3 border-t border-neutral-800 space-y-1">
+            <div className="flex items-center justify-center gap-2">
+              <span
+                className={`text-2xl font-black font-mono tracking-tight ${
+                  mt5Degraded ? 'text-neutral-400' : 'text-white'
+                }`}
+              >
+                {spotPrice.toLocaleString('en-US', {
+                  minimumFractionDigits: selectedSymbol.decimals,
+                  maximumFractionDigits: selectedSymbol.decimals,
+                })}
+              </span>
+              {mt5PriceAge !== null && (
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[9px] font-black tracking-widest ${
+                    mt5Degraded ? 'bg-neutral-700 text-neutral-400' : 'bg-sky-500/20 text-sky-300'
+                  }`}
+                >
+                  MT5
+                </span>
+              )}
+            </div>
+            <p className="text-[10px] font-mono text-neutral-500">
+              {selectedSymbol.displayName} · {mt5PriceAge !== null ? 'MT5 VPS quote' : 'Deriv live quote'}
+            </p>
+          </div>
         </div>
       </div>
     </div>

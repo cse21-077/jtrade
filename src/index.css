@@ -67,3 +67,13 @@
 		opacity: 1;
 	}
 }
+
+/* iOS Safari auto-zooms whenever a focused input's font-size is under 16px.
+   Force a 16px minimum on form controls at phone widths to prevent the jump. */
+@media (max-width: 768px) {
+	input,
+	select,
+	textarea {
+		font-size: max(16px, 1em);
+	}
+}

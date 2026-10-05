@@ -41,6 +41,17 @@ export const Mt5StatusCard: React.FC<{ account: StoredMt5Account }> = ({ account
     error: 'border-rose-400/50 bg-rose-500/10 text-rose-200',
   }[state];
 
+  if (state === 'pending') {
+    return (
+      <p className="flex items-center justify-center gap-1.5 text-center text-[11px] font-bold text-amber-600">
+        <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+        <span>
+          MT5 {account.login} · connecting — {message}
+        </span>
+      </p>
+    );
+  }
+
   return (
     <div className={`rounded-2xl border p-4 ${styles}`}>
       <div className="flex items-center gap-2">

@@ -33,6 +33,7 @@ BRIDGE_KEY = os.environ.get("JOEMONEY_BRIDGE_KEY", "")
 EA_TOKEN = os.environ.get("JOEMONEY_EA_TOKEN", "")
 ALLOWED_ORIGIN = os.environ.get("JOEMONEY_ALLOWED_ORIGIN", "http://localhost:3000")
 MAX_BATCH_SIZE = 100
+MAX_TICK_BATCH_SIZE = 200
 ORDER_TYPES = {
     "MARKET_BUY", "MARKET_SELL", "BUY_LIMIT", "SELL_LIMIT", "BUY_STOP", "SELL_STOP"
 }
@@ -80,6 +81,16 @@ def connect_db(path: Path | None = None) -> sqlite3.Connection:
             connected INTEGER NOT NULL,
             last_seen REAL NOT NULL,
             message TEXT NOT NULL DEFAULT ''
+        )"""
+    )
+    connection.execute(
+        """CREATE TABLE IF NOT EXISTS prices (
+            login TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            bid REAL NOT NULL,
+            ask REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            PRIMARY KEY(login, symbol)
         )"""
     )
     connection.execute(
@@ -175,6 +186,33 @@ def validate_order(item: object) -> dict:
         "tp_enabled": tp_enabled,
         "tp_distance": tp_distance,
     }
+
+
+def validate_ticks(payload: object) -> tuple[str, list[dict]]:
+    if not isinstance(payload, dict):
+        raise ValueError("Request body must be an object.")
+    login = str(payload.get("login", "")).strip()
+    if not LOGIN_RE.fullmatch(login):
+        raise ValueError("login must be 4-20 digits.")
+    ticks = payload.get("ticks")
+    if not isinstance(ticks, list) or not 1 <= len(ticks) <= MAX_TICK_BATCH_SIZE:
+        raise ValueError(f"ticks must contain 1-{MAX_TICK_BATCH_SIZE} ticks.")
+    validated = []
+    for tick in ticks:
+        if not isinstance(tick, dict):
+            raise ValueError("Each tick must be an object.")
+        symbol = tick.get("symbol")
+        if not isinstance(symbol, str) or not SYMBOL_RE.fullmatch(symbol) or "|" in symbol:
+            raise ValueError("Symbol must contain 1-64 letters, digits, spaces, dots, underscores, or hyphens.")
+        try:
+            bid = float(tick.get("bid"))
+            ask = float(tick.get("ask"))
+        except (TypeError, ValueError):
+            raise ValueError("bid and ask must be numbers.") from None
+        if not all(math.isfinite(value) for value in (bid, ask)) or bid <= 0 or ask <= 0:
+            raise ValueError("bid and ask must be finite numbers greater than zero.")
+        validated.append({"symbol": symbol, "bid": bid, "ask": ask})
+    return login, validated
 
 
 def reconcile_on_boot() -> None:
@@ -286,6 +324,44 @@ class BridgeHandler(BaseHTTPRequestHandler):
                         "message": heartbeat["message"] if heartbeat else "Waiting for the JoeMoney EA heartbeat.",
                     })
             return self._send(200, {"accounts": accounts})
+        if parsed.path == "/v1/prices":
+            if not client_authed(self.headers.get("Authorization", "")):
+                return self._send(401, {"error": "Unauthorized"})
+            params = parse_qs(parsed.query)
+            login = params.get("login", [""])[0].strip()
+            symbols_param = params.get("symbols", [""])[0]
+            clauses = []
+            arguments: list = []
+            if login:
+                if not LOGIN_RE.fullmatch(login):
+                    return self._send(400, {"error": "login must be 4-20 digits."})
+                clauses.append("login=?")
+                arguments.append(login)
+            else:
+                clauses.append("login IN (SELECT login FROM accounts WHERE is_active=1)")
+            if symbols_param.strip():
+                symbols = [symbol.strip() for symbol in symbols_param.split(",") if symbol.strip()]
+                if not symbols or any(not SYMBOL_RE.fullmatch(symbol) or "|" in symbol for symbol in symbols):
+                    return self._send(400, {"error": "Invalid symbols filter."})
+                clauses.append("symbol IN (%s)" % ",".join("?" * len(symbols)))
+                arguments.extend(symbols)
+            now = time.time()
+            with db_session() as db:
+                rows = db.execute(
+                    "SELECT login,symbol,bid,ask,updated_at FROM prices WHERE " + " AND ".join(clauses),
+                    arguments,
+                ).fetchall()
+            prices = [
+                {
+                    "login": row["login"],
+                    "symbol": row["symbol"],
+                    "bid": row["bid"],
+                    "ask": row["ask"],
+                    "age_sec": round(now - row["updated_at"], 1),
+                }
+                for row in rows
+            ]
+            return self._send(200, {"prices": prices, "now": now})
         match = re.fullmatch(r"/v1/orders/([0-9a-f-]+)", parsed.path)
         if match:
             if not client_authed(self.headers.get("Authorization", "")):
@@ -462,6 +538,26 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if not updated:
                 return self._send(404, {"error": "Unknown or already completed order."})
             return self._send(200, {"status": "recorded"})
+        if parsed.path == "/v1/prices":
+            if not ea_authed(self.headers.get("Authorization", "")):
+                return self._send(401, {"error": "Unauthorized"})
+            try:
+                payload = self._read_json()
+                login, ticks = validate_ticks(payload)
+            except (json.JSONDecodeError, ValueError, AttributeError) as error:
+                return self._send(400, {"error": str(error)})
+            with db_session() as db:
+                known = db.execute("SELECT 1 FROM accounts WHERE login=?", (login,)).fetchone()
+                if not known:
+                    return self._send(403, {"error": "Price login is not a registered JoeMoney account."})
+                now = time.time()
+                db.executemany(
+                    "INSERT INTO prices(login,symbol,bid,ask,updated_at) VALUES(?,?,?,?,?) "
+                    "ON CONFLICT(login,symbol) DO UPDATE SET "
+                    "bid=excluded.bid,ask=excluded.ask,updated_at=excluded.updated_at",
+                    [(login, tick["symbol"], tick["bid"], tick["ask"], now) for tick in ticks],
+                )
+            return self._send(200, {"status": "recorded", "count": len(ticks)})
         if parsed.path == "/v1/terminal/status":
             if not ea_authed(self.headers.get("Authorization", "")):
                 return self._send(401, {"error": "Unauthorized"})

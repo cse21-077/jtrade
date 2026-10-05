@@ -76,6 +76,7 @@ class BridgeTests(unittest.TestCase):
             db.execute("DELETE FROM orders")
             db.execute("DELETE FROM batches")
             db.execute("DELETE FROM terminal_status")
+            db.execute("DELETE FROM prices")
             db.execute("DELETE FROM accounts")
 
     def provision(self, login="123456", password="secret-pass", server="DerivSVG-Server-02"):
@@ -205,6 +206,92 @@ class BridgeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             bridge.validate_order({"symbol": "EURUSD", "order_type": "MARKET_BUY", "volume": float("nan"),
                                    "entry_price": 0, "tp_enabled": False, "tp_distance": 0})
+
+    def test_ea_posts_prices_and_client_reads_them_back(self):
+        self.provision()
+        ticks = [
+            {"symbol": "R_10", "bid": 123.45, "ask": 123.46},
+            {"symbol": "1HZ100V", "bid": 1420.5, "ask": 1420.51},
+        ]
+        status, body = self.request("/v1/prices", "POST", "test-ea-token",
+                                    {"login": "123456", "ticks": ticks})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["count"], 2)
+        status, body = self.request("/v1/prices", token=BRIDGE_KEY)
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertIn("now", payload)
+        self.assertEqual(len(payload["prices"]), 2)
+        by_symbol = {price["symbol"]: price for price in payload["prices"]}
+        self.assertEqual(by_symbol["R_10"]["bid"], 123.45)
+        self.assertEqual(by_symbol["R_10"]["ask"], 123.46)
+        self.assertEqual(by_symbol["R_10"]["login"], "123456")
+        self.assertGreaterEqual(by_symbol["R_10"]["age_sec"], 0)
+
+    def test_prices_reject_unknown_login_and_bad_symbols(self):
+        self.provision()
+        self.assertEqual(self.request("/v1/prices", "POST", "test-ea-token",
+                                      {"login": "424242", "ticks": [{"symbol": "R_10", "bid": 1, "ask": 2}]})[0], 403)
+        self.assertEqual(self.request("/v1/prices", "POST", "test-ea-token",
+                                      {"login": "123456", "ticks": [{"symbol": "R_10|x", "bid": 1, "ask": 2}]})[0], 400)
+        self.assertEqual(self.request("/v1/prices", "POST", "test-ea-token",
+                                      {"login": "123456", "ticks": [{"symbol": "R_10", "bid": "x", "ask": 2}]})[0], 400)
+        self.assertEqual(self.request("/v1/prices", "POST", "test-ea-token",
+                                      {"login": "123456", "ticks": []})[0], 400)
+
+    def test_prices_require_authentication_on_both_endpoints(self):
+        self.provision()
+        self.assertEqual(self.request("/v1/prices")[0], 401)
+        self.assertEqual(self.request("/v1/prices", "POST", None,
+                                      {"login": "123456", "ticks": [{"symbol": "R_10", "bid": 1, "ask": 2}]})[0], 401)
+
+    def test_prices_include_stale_ticks_with_age_sec(self):
+        self.provision()
+        self.request("/v1/prices", "POST", "test-ea-token",
+                     {"login": "123456", "ticks": [{"symbol": "R_10", "bid": 1.1, "ask": 1.2}]})
+        with bridge.db_session() as db:
+            db.execute("UPDATE prices SET updated_at=? WHERE login='123456'", (bridge.time.time() - 90,))
+        status, body = self.request("/v1/prices", token=BRIDGE_KEY)
+        self.assertEqual(status, 200)
+        price = json.loads(body)["prices"][0]
+        self.assertGreaterEqual(price["age_sec"], 89)
+        self.assertLess(price["age_sec"], 95)
+
+    def test_prices_filter_by_login_and_symbols(self):
+        self.provision(login="123456")
+        self.provision(login="654321")
+        self.request("/v1/prices", "POST", "test-ea-token",
+                     {"login": "123456", "ticks": [{"symbol": "R_10", "bid": 1, "ask": 2}]})
+        self.request("/v1/prices", "POST", "test-ea-token",
+                     {"login": "654321", "ticks": [
+                         {"symbol": "R_10", "bid": 3, "ask": 4},
+                         {"symbol": "R_25", "bid": 5, "ask": 6},
+                     ]})
+        status, body = self.request("/v1/prices?login=654321", token=BRIDGE_KEY)
+        self.assertEqual(status, 200)
+        symbols = sorted(price["symbol"] for price in json.loads(body)["prices"])
+        self.assertEqual(symbols, ["R_10", "R_25"])
+        status, body = self.request("/v1/prices?symbols=R_25", token=BRIDGE_KEY)
+        self.assertEqual(status, 200)
+        prices = json.loads(body)["prices"]
+        self.assertEqual(len(prices), 1)
+        self.assertEqual(prices[0]["symbol"], "R_25")
+        self.assertEqual(prices[0]["login"], "654321")
+        self.assertEqual(self.request("/v1/prices?symbols=R_10|bad", token=BRIDGE_KEY)[0], 400)
+
+    def test_prices_default_to_active_accounts_only(self):
+        self.provision(login="123456")
+        self.provision(login="654321")
+        self.request("/v1/accounts/654321/deactivate", "POST", BRIDGE_KEY)
+        self.request("/v1/prices", "POST", "test-ea-token",
+                     {"login": "654321", "ticks": [{"symbol": "R_10", "bid": 1, "ask": 2}]})
+        self.request("/v1/prices", "POST", "test-ea-token",
+                     {"login": "123456", "ticks": [{"symbol": "R_10", "bid": 3, "ask": 4}]})
+        status, body = self.request("/v1/prices", token=BRIDGE_KEY)
+        self.assertEqual(status, 200)
+        prices = json.loads(body)["prices"]
+        self.assertEqual(len(prices), 1)
+        self.assertEqual(prices[0]["login"], "123456")
 
     def test_account_validation(self):
         self.assertEqual(self.request("/v1/accounts", "POST", BRIDGE_KEY,

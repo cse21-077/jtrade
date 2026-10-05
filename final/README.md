@@ -185,6 +185,8 @@ response means "accepted by the bridge", not "executed" — confirm trades in MT
 - `GET /v1/commands/next?login=...` (EA): atomically claims the oldest queued command for that login; payload is the 7-field pipe-delimited line `id|symbol|order_type|volume|entry_price|tp_enabled|tp_distance`.
 - `POST /v1/commands/{id}/result` (EA): `placed`/`rejected` acknowledgement with ticket and message.
 - `POST /v1/terminal/status` (EA): per-login heartbeat. `connected=true` means the terminal is online **and** the account login succeeded; a failed login never produces an authorized heartbeat for the registered login (it is refused), so the PWA's "pending" state flips to "connected" only after a real MT5 login. `GET /v1/status?login=` (client) reads it.
+- `POST /v1/prices` (EA): `{login, ticks:[{symbol,bid,ask}, ...]}` (1-200). The EA reports live ticks for its `ReportSymbols` input every `ReportSeconds` (default 3s); unknown logins are refused.
+- `GET /v1/prices` (client): `?login=` and `?symbols=A,B` filters → `{prices:[{login,symbol,bid,ask,age_sec}], now}`. The PWA polls this every 4s and prefers these MT5 quotes over Deriv WebSocket ticks whenever a tick is under 60s old; 30-60s is shown grayed out as degraded.
 
 ## Warnings
 

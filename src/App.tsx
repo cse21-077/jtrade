@@ -10,6 +10,7 @@ import { OfflineIndicator } from './components/OfflineIndicator';
 import { Mt5AccountsScreen } from './components/Mt5AccountsScreen';
 import { derivService } from './services/derivWs';
 import { getStoredMt5Account, StoredMt5Account } from './services/joemoneyMt5Api';
+import { getMt5Quote, MT5_MAX_AGE_SEC, useMt5Prices } from './hooks/useMt5Prices';
 import { DerivAccount, MarketSymbol, PlacedOrder, TradeNotice } from './types/trading';
 import { CheckCircle2, CircleAlert, X } from 'lucide-react';
 
@@ -55,6 +56,14 @@ export default function App() {
   const [tradeNotice, setTradeNotice] = useState<TradeNotice | null>(null);
   const executingOrderIds = useRef(new Set<string>());
   const isMt5Route = window.location.pathname === '/mt5' || window.location.pathname === '/mt5-demo';
+
+  // Prefer the MT5 quote from the VPS bridge when a fresh tick exists for the
+  // selected symbol; fall back to the Deriv WebSocket price otherwise.
+  const { prices: mt5Prices } = useMt5Prices();
+  const mt5Quote = getMt5Quote(mt5Prices, selectedSymbol.symbol);
+  const mt5PriceAge = mt5Quote && mt5Quote.ageSec < MT5_MAX_AGE_SEC ? mt5Quote.ageSec : null;
+  const effectiveSpotPrice =
+    mt5Quote && mt5PriceAge !== null ? (mt5Quote.bid + mt5Quote.ask) / 2 : spotPrice;
 
   // Listen to Deriv account status
   useEffect(() => {
@@ -210,11 +219,10 @@ export default function App() {
             {activeTab === 'home' && (
               <HomeScreen
                 account={account}
-                spotPrice={spotPrice}
+                spotPrice={effectiveSpotPrice}
                 selectedSymbol={selectedSymbol}
+                mt5PriceAge={mt5PriceAge}
                 mt5Account={mt5Account}
-                onDeployOrder={(order) => setOrders((prev) => [order, ...prev])}
-                onTradeNotice={setTradeNotice}
               />
             )}
 
@@ -222,7 +230,8 @@ export default function App() {
             {activeTab === 'grid' && (
               <GridInputsScreen
                 account={account}
-                spotPrice={spotPrice}
+                spotPrice={effectiveSpotPrice}
+                mt5PriceAge={mt5PriceAge}
                 selectedSymbol={selectedSymbol}
                 onSelectSymbol={setSelectedSymbol}
                 symbols={SYMBOLS}
@@ -235,7 +244,8 @@ export default function App() {
             {activeTab === 'orders' && (
               <OrdersScreen
                 orders={orders}
-                spotPrice={spotPrice}
+                spotPrice={effectiveSpotPrice}
+                mt5PriceAge={mt5PriceAge}
                 onCancelOrder={(id) => setOrders((prev) => prev.filter((o) => o.id !== id))}
                 onCancelAll={() => setOrders((prev) => prev.filter((o) => o.status === 'FILLED'))}
                 onClosePosition={async (id) => {

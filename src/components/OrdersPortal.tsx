@@ -8,6 +8,7 @@ import {
   MarketSymbol,
 } from '../types/trading';
 import { derivService } from '../services/derivWs';
+import { getMt5Quote, MT5_MAX_AGE_SEC, useMt5Prices } from '../hooks/useMt5Prices';
 import { OrderLadderVisualizer } from './OrderLadderVisualizer';
 import { ActiveOrdersList } from './ActiveOrdersList';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -31,6 +32,8 @@ import {
   Activity,
   History,
   Info,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 
 const POPULAR_SYMBOLS: MarketSymbol[] = [
@@ -100,6 +103,33 @@ export const OrdersPortal: React.FC<OrdersPortalProps> = ({ account, onDisconnec
   const [autoUpdateSpot, setAutoUpdateSpot] = useState<boolean>(true);
   const [customSpotU, setCustomSpotU] = useState<number>(4170.0);
   const effectiveU = autoUpdateSpot ? liveSpotPrice : customSpotU;
+
+  // Live MT5 quote from the VPS bridge; preferred over Deriv ticks when fresh.
+  const { prices: mt5Prices } = useMt5Prices();
+  const mt5Quote = getMt5Quote(mt5Prices, selectedSymbol.symbol);
+  const mt5Spot =
+    mt5Quote && mt5Quote.ageSec < MT5_MAX_AGE_SEC ? (mt5Quote.bid + mt5Quote.ask) / 2 : null;
+
+  useEffect(() => {
+    if (mt5Spot === null) return;
+    setLiveSpotPrice((prev) => {
+      if (mt5Spot > prev) setPriceFlash('up');
+      else if (mt5Spot < prev) setPriceFlash('down');
+      setTimeout(() => setPriceFlash(null), 500);
+      return mt5Spot;
+    });
+  }, [mt5Spot]);
+
+  // Collapsible spot price box (persisted)
+  const [priceBoxCollapsed, setPriceBoxCollapsed] = useState<boolean>(
+    () => window.localStorage.getItem('joemoney-price-box-collapsed') === '1'
+  );
+  const togglePriceBox = () => {
+    setPriceBoxCollapsed((prev) => {
+      window.localStorage.setItem('joemoney-price-box-collapsed', prev ? '0' : '1');
+      return !prev;
+    });
+  };
 
   const [direction, setDirection] = useState<OrderDirection>('SELL');
   const [xOffset, setXOffset] = useState<number>(5.0); // e.g. 4170 - 5 = 4165
@@ -426,6 +456,11 @@ export const OrdersPortal: React.FC<OrdersPortalProps> = ({ account, onDisconnec
               <strong className="font-mono text-xs sm:text-sm font-extrabold">
                 {liveSpotPrice.toFixed(selectedSymbol.decimals)}
               </strong>
+              {mt5Spot !== null && (
+                <span className="px-1 py-0.5 rounded text-[8px] font-black tracking-widest bg-sky-600 text-white">
+                  MT5
+                </span>
+              )}
             </div>
 
             {/* PWA Install Button */}
@@ -587,46 +622,76 @@ export const OrdersPortal: React.FC<OrdersPortalProps> = ({ account, onDisconnec
                         u
                       </span>
                       <span>Spot Price</span>
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setAutoUpdateSpot(!autoUpdateSpot)}
-                      className="text-[11px] font-semibold text-sky-600 hover:text-sky-700 flex items-center gap-1 cursor-pointer"
-                    >
-                      {autoUpdateSpot ? (
-                        <>
-                          <Unlock className="w-3 h-3 text-emerald-500" />
-                          <span>Live Streaming</span>
-                        </>
-                      ) : (
-                        <>
-                          <Lock className="w-3 h-3 text-amber-500" />
-                          <span>Fixed / Locked</span>
-                        </>
+                      {mt5Spot !== null && (
+                        <span className="px-1 py-0.5 rounded text-[8px] font-black tracking-widest bg-sky-600 text-white">
+                          MT5
+                        </span>
                       )}
-                    </button>
-                  </div>
-
-                  <div className="relative">
-                    <input
-                      type="number"
-                      step="any"
-                      value={autoUpdateSpot ? liveSpotPrice : customSpotU}
-                      disabled={autoUpdateSpot}
-                      onChange={(e) => setCustomSpotU(parseFloat(e.target.value) || 0)}
-                      className={`w-full px-3.5 py-2.5 text-sm rounded-xl font-mono font-bold border transition ${
-                        autoUpdateSpot
-                          ? 'bg-sky-50/50 border-sky-200 text-sky-900 cursor-not-allowed'
-                          : 'bg-white border-sky-300 text-slate-800 focus:ring-2 focus:ring-sky-400'
-                      }`}
-                    />
-                    <div className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-bold text-slate-400">
-                      {selectedSymbol.symbol}
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setAutoUpdateSpot(!autoUpdateSpot)}
+                        className="text-[11px] font-semibold text-sky-600 hover:text-sky-700 flex items-center gap-1 cursor-pointer"
+                      >
+                        {autoUpdateSpot ? (
+                          <>
+                            <Unlock className="w-3 h-3 text-emerald-500" />
+                            <span>Live Streaming</span>
+                          </>
+                        ) : (
+                          <>
+                            <Lock className="w-3 h-3 text-amber-500" />
+                            <span>Fixed / Locked</span>
+                          </>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={togglePriceBox}
+                        className="p-1 rounded-md text-slate-400 hover:text-sky-600 hover:bg-sky-50 transition cursor-pointer"
+                        title={priceBoxCollapsed ? 'Expand price box' : 'Collapse price box'}
+                      >
+                        {priceBoxCollapsed ? (
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        ) : (
+                          <ChevronUp className="w-3.5 h-3.5" />
+                        )}
+                      </button>
                     </div>
                   </div>
-                  <p className="text-[10px] text-slate-500">
-                    Live spot price $u$ from Deriv. Toggle to lock or enter custom value (e.g. 4170).
-                  </p>
+
+                  {priceBoxCollapsed ? (
+                    <p className="font-mono text-sm font-bold text-sky-900">
+                      {liveSpotPrice.toFixed(selectedSymbol.decimals)}{' '}
+                      <span className="text-[10px] font-sans font-medium text-slate-400">
+                        {selectedSymbol.symbol} · tap the arrow to expand
+                      </span>
+                    </p>
+                  ) : (
+                    <>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          step="any"
+                          value={autoUpdateSpot ? liveSpotPrice : customSpotU}
+                          disabled={autoUpdateSpot}
+                          onChange={(e) => setCustomSpotU(parseFloat(e.target.value) || 0)}
+                          className={`w-full px-3.5 py-2.5 text-sm rounded-xl font-mono font-bold border transition ${
+                            autoUpdateSpot
+                              ? 'bg-sky-50/50 border-sky-200 text-sky-900 cursor-not-allowed'
+                              : 'bg-white border-sky-300 text-slate-800 focus:ring-2 focus:ring-sky-400'
+                          }`}
+                        />
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-bold text-slate-400">
+                          {selectedSymbol.symbol}
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-slate-500">
+                        Live spot price $u$ from {mt5Spot !== null ? 'MT5 via the JoeMoney VPS bridge' : 'Deriv'}. Toggle to lock or enter custom value (e.g. 4170).
+                      </p>
+                    </>
+                  )}
                 </div>
 
                 {/* Input 2: Offset x & Resulting First Position Base Price */}
