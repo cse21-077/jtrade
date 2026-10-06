@@ -1,6 +1,6 @@
 // JoeMoney local MT5 bridge EA. Runs one terminal per managed account slot.
 #property strict
-#property version "4.06"
+#property version "7.00"
 
 input string BridgeUrl = "http://127.0.0.1:8765";
 // Fixed at compile time on purpose. Chart profiles (.chr) can only override
@@ -29,7 +29,7 @@ int OnInit()
    if(PollSeconds < 1 || ReportSeconds < 1 || StringLen(EaToken) < 32)
       return INIT_PARAMETERS_INCORRECT;
    EventSetTimer(PollSeconds);
-   Print("JoeMoney EA build 5.01 ready. MT5 login: ", (long)AccountInfoInteger(ACCOUNT_LOGIN));
+   Print("JoeMoney EA build 7.00 ready. MT5 login: ", (long)AccountInfoInteger(ACCOUNT_LOGIN));
    Print("Allow WebRequest for ", BridgeUrl, " in MT5 Options > Expert Advisors.");
    return INIT_SUCCEEDED;
 }
