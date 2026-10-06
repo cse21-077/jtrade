@@ -1,6 +1,6 @@
 // JoeMoney local MT5 bridge EA. Intended for a single demo account during testing.
 #property strict
-#property version "1.00"
+#property version "1.01"
 
 input string BridgeUrl = "http://127.0.0.1:8765";
 input string EaToken = "SET_A_DISTINCT_EA_TOKEN";
@@ -12,13 +12,15 @@ input int ReportSeconds = 3;
 ulong g_last_status_ms = 0;
 ulong g_last_report_ms = 0;
 ulong g_last_report_warn_ms = 0;
+ulong g_last_symbol_warn_ms = 0;
+string g_last_response_headers = "";
 
 int OnInit()
 {
    if(PollSeconds < 1 || ReportSeconds < 1 || StringLen(EaToken) < 32)
       return INIT_PARAMETERS_INCORRECT;
    EventSetTimer(PollSeconds);
-   Print("JoeMoney EA ready. MT5 login: ", (long)AccountInfoInteger(ACCOUNT_LOGIN));
+   Print("JoeMoney EA build 1.01 ready. MT5 login: ", (long)AccountInfoInteger(ACCOUNT_LOGIN));
    Print("Allow WebRequest for ", BridgeUrl, " in MT5 Options > Expert Advisors.");
    return INIT_SUCCEEDED;
 }
@@ -67,6 +69,7 @@ bool HttpRequest(const string method, const string url, const string body,
 
    ResetLastError();
    http_status = WebRequest(method, url, AuthHeaders(), 5000, data, result, result_headers);
+   g_last_response_headers = result_headers;
    if(http_status == -1)
    {
       Print("JoeMoney WebRequest failed: ", GetLastError(), " (check MT5 WebRequest allowlist)");
@@ -103,9 +106,13 @@ void PollBridge()
    bool tp_enabled = fields[5] == "1";
    double tp_distance = StringToDouble(fields[6]);
 
+      Print("JoeMoney processing ", order_type, " ", symbol, " volume ", DoubleToString(volume, 2),
+         " entry ", DoubleToString(entry_price, 8), " command ", command_id);
    string message;
    ulong ticket = 0;
    bool placed = ExecuteOrder(symbol, order_type, volume, entry_price, tp_enabled, tp_distance, ticket, message);
+      Print("JoeMoney execution ", (placed ? "accepted" : "rejected"), " command ", command_id,
+         ": ", message);
    SendResult(command_id, placed, ticket, message);
 }
 
@@ -234,8 +241,10 @@ void SendResult(const string id, const bool placed, const ulong ticket, const st
                  (string)ticket + "\",\"message\":\"" + JsonEscape(message) + "\"}";
    string response;
    int status;
-   HttpRequest("POST", BridgeUrl + "/v1/commands/" + id + "/result", body, response, status);
-   if(status != 200) Print("JoeMoney result acknowledgement failed, HTTP ", status, " ", response);
+   bool sent = HttpRequest("POST", BridgeUrl + "/v1/commands/" + id + "/result", body, response, status);
+   if(!sent || status != 200)
+      Print("JoeMoney result acknowledgement failed, HTTP ", status, ", response: ", response,
+            ", headers: ", g_last_response_headers);
 }
 
 void SendStatus()
@@ -264,6 +273,7 @@ void ReportPrices()
       return;
 
    string ticks = "";
+   string skipped = "";
    int reported = 0;
    for(int i = 0; i < count && reported < 200; i++)
    {
@@ -273,15 +283,28 @@ void ReportPrices()
       if(StringLen(name) == 0)
          continue;
       if(!SymbolSelect(name, true))
+      {
+         if(StringLen(skipped) > 0) skipped += ", ";
+         skipped += name + " (select failed)";
          continue;
+      }
       MqlTick tick;
       if(!SymbolInfoTick(name, tick))
+      {
+         if(StringLen(skipped) > 0) skipped += ", ";
+         skipped += name + " (no tick)";
          continue;
+      }
       if(reported > 0)
          ticks += ",";
       ticks += "{\"symbol\":\"" + JsonEscape(name) + "\",\"bid\":" + DoubleToString(tick.bid, 8) +
                ",\"ask\":" + DoubleToString(tick.ask, 8) + "}";
       reported++;
+   }
+   if(StringLen(skipped) > 0 && GetTickCount64() - g_last_symbol_warn_ms >= 60000)
+   {
+      g_last_symbol_warn_ms = GetTickCount64();
+      Print("JoeMoney symbols unavailable in this terminal: ", skipped);
    }
    if(reported == 0)
       return;
@@ -290,11 +313,13 @@ void ReportPrices()
    string body = "{\"login\":\"" + login + "\",\"ticks\":[" + ticks + "]}";
    string response;
    int status;
-   if(!HttpRequest("POST", BridgeUrl + "/v1/prices", body, response, status))
+   bool sent = HttpRequest("POST", BridgeUrl + "/v1/prices", body, response, status);
+   if(!sent)
       return;
    if(status != 200 && GetTickCount64() - g_last_report_warn_ms >= 60000)
    {
       g_last_report_warn_ms = GetTickCount64();
-      Print("JoeMoney price report failed, HTTP ", status, " ", response);
+      Print("JoeMoney price report failed, HTTP ", status, ", response: ", response,
+            ", headers: ", g_last_response_headers);
    }
 }
