@@ -1,8 +1,8 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { DerivAccount, MarketSymbol } from '../types/trading';
 import { MascotHead } from './MascotHead';
 import { Mt5StatusCard } from './Mt5StatusCard';
-import { StoredMt5Account } from '../services/joemoneyMt5Api';
+import { getMentorToken, getMt5AccountStatus, StoredMt5Account } from '../services/joemoneyMt5Api';
 import { MT5_STALE_AFTER_SEC } from '../hooks/useMt5Prices';
 
 interface HomeScreenProps {
@@ -21,7 +21,34 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   mt5Account,
 }) => {
   const accountId = account.loginId || account.mt5Login || 'Demo-Account';
-  const mt5Degraded = mt5PriceAge !== null && mt5PriceAge >= MT5_STALE_AFTER_SEC;
+  const mt5Degraded = mt5PriceAge === null || mt5PriceAge >= MT5_STALE_AFTER_SEC;
+  const [mt5Balance, setMt5Balance] = useState<{ balance: number; currency: string } | null>(null);
+
+  useEffect(() => {
+    if (!mt5Account) {
+      setMt5Balance(null);
+      return;
+    }
+    let cancelled = false;
+    const loadBalance = async () => {
+      try {
+        const status = await getMt5AccountStatus(getMentorToken(), mt5Account.login);
+        if (!cancelled) {
+          setMt5Balance(status.terminal_connected
+            ? { balance: status.balance, currency: status.currency }
+            : null);
+        }
+      } catch {
+        if (!cancelled) setMt5Balance(null);
+      }
+    };
+    void loadBalance();
+    const timer = window.setInterval(() => void loadBalance(), 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [mt5Account?.login]);
 
   return (
     <div className="min-h-[calc(100dvh-1rem)] flex items-center justify-center px-4 pt-4 pb-24 font-sans select-none bg-white">
@@ -34,23 +61,29 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
         <div className="bg-[#18181b] rounded-2xl p-5 text-white space-y-4 text-center">
           <div className="space-y-1">
-            <h1 className="text-lg font-black tracking-tight font-mono text-white break-words">{accountId}</h1>
-            <p className="text-sm font-mono text-neutral-300">
-              {account.currency || 'USD'} {account.balance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-            </p>
+            <h1 className="text-lg font-black tracking-tight font-mono text-white break-words">
+              {mt5Account ? `MT5 ${mt5Account.login}` : accountId}
+            </h1>
+            {mt5Balance && (
+              <p className="text-sm font-mono text-neutral-300">
+                {mt5Balance.currency} {mt5Balance.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </p>
+            )}
           </div>
 
           <div className="pt-3 border-t border-neutral-800 space-y-1">
             <div className="flex items-center justify-center gap-2">
               <span
                 className={`text-2xl font-black font-mono tracking-tight ${
-                  mt5Degraded ? 'text-neutral-400' : 'text-white'
+                  mt5Degraded ? 'text-amber-300' : 'text-white'
                 }`}
               >
-                {spotPrice.toLocaleString('en-US', {
-                  minimumFractionDigits: selectedSymbol.decimals,
-                  maximumFractionDigits: selectedSymbol.decimals,
-                })}
+                {mt5Degraded
+                  ? 'Quote unavailable'
+                  : spotPrice.toLocaleString('en-US', {
+                    minimumFractionDigits: selectedSymbol.decimals,
+                    maximumFractionDigits: selectedSymbol.decimals,
+                  })}
               </span>
               {mt5PriceAge !== null && (
                 <span
@@ -63,7 +96,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               )}
             </div>
             <p className="text-[10px] font-mono text-neutral-500">
-              {selectedSymbol.displayName} · {mt5PriceAge !== null ? 'MT5 VPS quote' : 'Deriv live quote'}
+              {selectedSymbol.displayName} · {mt5Degraded
+                ? mt5PriceAge === null ? 'No MT5 quote received' : `MT5 quote stale (${mt5PriceAge.toFixed(1)}s)`
+                : 'MT5 VPS quote'}
             </p>
           </div>
         </div>

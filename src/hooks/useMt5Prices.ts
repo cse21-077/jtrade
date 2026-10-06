@@ -47,18 +47,23 @@ export const getMt5Quote = (
   symbol: string
 ): Mt5Quote | null => prices[toMt5Symbol(symbol)] ?? null;
 
-export const useMt5Prices = () => {
+export const useMt5Prices = (login?: string) => {
   const [prices, setPrices] = useState<Record<string, Mt5Quote>>({});
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const lastGood = useRef<Record<string, Mt5Quote>>({});
+  const lastGoodAt = useRef<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    lastGood.current = {};
+    lastGoodAt.current = null;
+    setPrices({});
+    setLastUpdated(null);
 
     const load = async () => {
       try {
-        const payload = await getMt5Prices(getMentorToken());
+        const payload = await getMt5Prices(getMentorToken(), login ? { login } : undefined);
         if (cancelled) return;
         const freshest: Record<string, Mt5Quote> = {};
         for (const tick of payload.prices) {
@@ -69,13 +74,20 @@ export const useMt5Prices = () => {
           }
         }
         lastGood.current = freshest;
+        lastGoodAt.current = Date.now();
         setPrices(freshest);
         setLastUpdated(Date.now());
         setError(null);
       } catch (loadError) {
         if (cancelled) return;
         setError(loadError instanceof Error ? loadError.message : 'Could not load MT5 prices.');
-        setPrices(lastGood.current);
+        const elapsedSec = lastGoodAt.current === null ? 0 : (Date.now() - lastGoodAt.current) / 1000;
+        setPrices(Object.fromEntries(
+          Object.entries(lastGood.current).map(([symbol, quote]) => [
+            symbol,
+            { ...quote, ageSec: quote.ageSec + elapsedSec },
+          ])
+        ));
       }
     };
 
@@ -89,7 +101,7 @@ export const useMt5Prices = () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [login]);
 
   return { prices, lastUpdated, error };
 };

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   DerivAccount,
   LadderLevel,
@@ -22,12 +22,14 @@ import {
 import { SymbolSearchSelect } from './SymbolSearchSelect';
 import { getMentorToken, getMt5Order, Mt5OrderRequest, queueMt5Orders, StoredMt5Account } from '../services/joemoneyMt5Api';
 import { MT5_PRICE_STALE_AFTER_SEC } from '../services/marketPrice';
+import { Mt5Quote } from '../hooks/useMt5Prices';
 
 interface GridInputsScreenProps {
   account: DerivAccount;
   mt5Account: StoredMt5Account | null;
   spotPrice: number;
   mt5PriceAge?: number | null;
+  mt5Quote?: Mt5Quote | null;
   selectedSymbol: MarketSymbol;
   onSelectSymbol: (sym: MarketSymbol) => void;
   symbols: MarketSymbol[];
@@ -42,6 +44,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
   mt5Account,
   spotPrice,
   mt5PriceAge = null,
+  mt5Quote = null,
   selectedSymbol,
   onSelectSymbol,
   symbols,
@@ -60,23 +63,26 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
   const [showFormulaDetails, setShowFormulaDetails] = useState(false);
 
   const [isDeploying, setIsDeploying] = useState(false);
+  const lastAlignedKey = useRef('');
 
-  // Auto-align default start price when market spot updates or action changes
+  // Align once per symbol/action after its first fresh MT5 quote arrives.
   useEffect(() => {
-    if (spotPrice > 0) {
-      if (tradeAction === 'SELL_STOP' || tradeAction === 'BUY_LIMIT') {
-        const initial = +(spotPrice - 5.0).toFixed(selectedSymbol.decimals);
-        setStartPrice(initial > 0 ? initial : +(spotPrice * 0.99).toFixed(selectedSymbol.decimals));
-        setStepDirection('down');
-      } else if (tradeAction === 'SELL_LIMIT' || tradeAction === 'BUY_STOP') {
-        const initial = +(spotPrice + 5.0).toFixed(selectedSymbol.decimals);
-        setStartPrice(initial);
-        setStepDirection('up');
-      } else {
-        setStartPrice(+spotPrice.toFixed(selectedSymbol.decimals));
-      }
+    const key = `${selectedSymbol.symbol}:${tradeAction}`;
+    if (spotPrice <= 0 || mt5PriceAge === null || mt5PriceAge >= MT5_PRICE_STALE_AFTER_SEC || lastAlignedKey.current === key) {
+      return;
     }
-  }, [tradeAction, selectedSymbol]);
+    lastAlignedKey.current = key;
+    if (tradeAction === 'SELL_STOP' || tradeAction === 'BUY_LIMIT') {
+      const initial = +(spotPrice - 5.0).toFixed(selectedSymbol.decimals);
+      setStartPrice(initial > 0 ? initial : +(spotPrice * 0.99).toFixed(selectedSymbol.decimals));
+      setStepDirection('down');
+    } else if (tradeAction === 'SELL_LIMIT' || tradeAction === 'BUY_STOP') {
+      setStartPrice(+(spotPrice + 5.0).toFixed(selectedSymbol.decimals));
+      setStepDirection('up');
+    } else {
+      setStartPrice(+spotPrice.toFixed(selectedSymbol.decimals));
+    }
+  }, [tradeAction, selectedSymbol, spotPrice, mt5PriceAge]);
 
   // Derive direction & order type
   const direction: OrderDirection = tradeAction.startsWith('SELL') ? 'SELL' : 'BUY';
@@ -165,7 +171,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
     if (mt5PriceAge === null || mt5PriceAge >= MT5_PRICE_STALE_AFTER_SEC) {
       onTradeNotice({
         success: false,
-        message: 'MT5 price is unavailable or stale. Wait for a fresh quote before deploying the grid.',
+        message: `MT5 quote for ${selectedSymbol.symbol} is ${mt5PriceAge === null ? 'missing' : `stale (${mt5PriceAge.toFixed(1)}s old)`}. Check the exact MT5 symbol in Market Watch and the EA ReportSymbols list before deploying.`,
         trades: [],
       });
       return;
@@ -319,11 +325,20 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
               mt5PriceAge !== null && mt5PriceAge >= MT5_PRICE_STALE_AFTER_SEC ? 'text-slate-400' : ''
             }
           >
-            Spot: {spotPrice.toFixed(selectedSymbol.decimals)}
+            Spot: {mt5PriceAge !== null && mt5PriceAge < MT5_PRICE_STALE_AFTER_SEC
+              ? spotPrice.toFixed(selectedSymbol.decimals)
+              : `No fresh MT5 quote for ${selectedSymbol.symbol}`}
           </span>
           {mt5Badge}
         </div>
       </div>
+      {mt5Account && (
+        <p className="-mt-3 text-right text-[10px] font-mono text-slate-500">
+          MT5 {mt5Account.login} · {mt5Quote && mt5PriceAge !== null && mt5PriceAge < MT5_PRICE_STALE_AFTER_SEC
+            ? `bid ${mt5Quote.bid} / ask ${mt5Quote.ask} · ${mt5PriceAge.toFixed(1)}s`
+            : 'selected account has no fresh quote for this exact symbol'}
+        </p>
+      )}
 
       {/* Searchable Market Selector */}
       <SymbolSearchSelect

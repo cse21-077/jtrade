@@ -70,11 +70,6 @@ export const Mt5StatusCard: React.FC<{ account: StoredMt5Account }> = ({ account
         </p>
       </div>
       <p className="mt-1.5 text-[11px] leading-relaxed">{message}</p>
-      {balance !== null && currency && (
-        <p className="mt-2 text-center text-xs font-black text-emerald-200">
-          MT5 balance: {balance.toLocaleString('en-US', { maximumFractionDigits: 2 })} {currency}
-        </p>
-      )}
       {state === 'connected' ? (
         <a
           href="/mt5"

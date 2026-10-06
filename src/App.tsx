@@ -27,21 +27,17 @@ export default function App() {
   const [account, setAccount] = useState<DerivAccount>(derivService.getAccount());
   const [mt5Account, setMt5Account] = useState<StoredMt5Account | null>(() => getStoredMt5Account());
   const [selectedSymbol, setSelectedSymbol] = useState<MarketSymbol>(SYMBOLS[0]);
-  const [spotPrice, setSpotPrice] = useState<number>(0);
   const [orders, setOrders] = useState<PlacedOrder[]>([]);
   const [tradeNotice, setTradeNotice] = useState<TradeNotice | null>(null);
   const isMt5Route = window.location.pathname === '/mt5' || window.location.pathname === '/mt5-demo';
 
   // MT5 is the only supported market price source. A stale or missing quote is
   // not substituted with any external fallback.
-  const { prices: mt5Prices } = useMt5Prices();
+  const { prices: mt5Prices } = useMt5Prices(mt5Account?.login);
   const mt5Price = getMt5MidPrice(mt5Prices, selectedSymbol.symbol);
-  const mt5PriceAge = mt5Prices[toMt5Symbol(selectedSymbol.symbol)]?.ageSec ?? null;
-  const effectiveSpotPrice = mt5Price ?? spotPrice;
-
-  useEffect(() => {
-    if (mt5Price !== null) setSpotPrice(mt5Price);
-  }, [mt5Price]);
+  const mt5Quote = mt5Prices[toMt5Symbol(selectedSymbol.symbol)] ?? null;
+  const mt5PriceAge = mt5Quote?.ageSec ?? null;
+  const effectiveSpotPrice = mt5Price ?? 0;
 
   // Listen to Deriv account status
   useEffect(() => {
@@ -116,6 +112,7 @@ export default function App() {
                 spotPrice={effectiveSpotPrice}
                 mt5PriceAge={mt5PriceAge}
                 selectedSymbol={selectedSymbol}
+                mt5Quote={mt5Quote}
                 onSelectSymbol={setSelectedSymbol}
                 symbols={SYMBOLS}
                 onDeployOrders={handleDeployOrders}
