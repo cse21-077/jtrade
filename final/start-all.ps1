@@ -1,4 +1,4 @@
-param([switch]$OpenMaster)
+param([switch]$OpenMaster, [switch]$RefreshTerminals)
 
 $ErrorActionPreference = 'Stop'
 
@@ -10,19 +10,19 @@ $masterDirectory = if ($env:JOEMONEY_TERMINAL_MASTER) {
 $masterExecutable = Join-Path $masterDirectory 'terminal64.exe'
 $shellExecutable = (Get-Process -Id $PID).Path
 
-function Start-ScriptWindow([string]$ScriptName) {
+function Start-ScriptWindow([string]$ScriptName, [string]$ExtraArguments = '') {
     $scriptPath = Join-Path $PSScriptRoot $ScriptName
     if (-not (Test-Path $scriptPath)) {
         throw "Required script not found: $scriptPath"
     }
 
-    $arguments = '-NoExit -ExecutionPolicy Bypass -File "{0}"' -f $scriptPath
+    $arguments = '-NoExit -ExecutionPolicy Bypass -File "{0}" {1}' -f $scriptPath, $ExtraArguments
     Start-Process -FilePath $shellExecutable -ArgumentList $arguments -WorkingDirectory $PSScriptRoot
     Write-Host "Started $ScriptName in a separate PowerShell window."
 }
 
 Start-ScriptWindow 'start-caddy.ps1'
-Start-ScriptWindow 'start-bridge.ps1'
+Start-ScriptWindow 'start-bridge.ps1' $(if ($RefreshTerminals) { '-RefreshTerminals' } else { '' })
 
 if ($OpenMaster) {
     if (-not (Test-Path $masterExecutable)) {

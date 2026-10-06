@@ -222,8 +222,11 @@ def validate_ticks(payload: object) -> tuple[str, list[dict]]:
     return login, validated
 
 
-def reconcile_on_boot() -> None:
-    """Re-launch terminals for active accounts that are not running (pre-warm on boot)."""
+def reconcile_on_boot(force_refresh: bool = False) -> None:
+    """Launch active accounts, optionally closing and refreshing managed terminals first."""
+    if force_refresh:
+        print("[reconcile] closing managed MT5 terminals before refreshing EA/profile files")
+        tm.stop_managed_terminals()
     running = tm.running_logins(ttl=0)
     with db_session() as db:
         rows = db.execute("SELECT * FROM accounts WHERE is_active=1").fetchall()

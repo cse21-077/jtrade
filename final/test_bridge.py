@@ -155,6 +155,15 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertFalse(json.loads(body)["terminal_connected"])
 
+    def test_force_refresh_stops_managed_terminals_before_reconcile(self):
+        self.provision()
+        with patch.object(bridge.tm, "stop_managed_terminals") as stop_managed, \
+             patch.object(bridge.tm, "running_logins", return_value=set()), \
+             patch.object(bridge.tm, "ensure_terminal", return_value=(True, "launched")) as ensure:
+            bridge.reconcile_on_boot(force_refresh=True)
+        stop_managed.assert_called_once_with()
+        ensure.assert_called_once()
+
     def test_explicit_ea_heartbeat_marks_matching_login_connected(self):
         self.provision()
         status, _ = self.request("/v1/terminal/status", "POST", "test-ea-token",

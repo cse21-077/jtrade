@@ -16,6 +16,7 @@ the VPS, so clients never authenticate by hand.
 - Market BUY/SELL and broker-held BUY_LIMIT, SELL_LIMIT, BUY_STOP, SELL_STOP orders; one order object per position, up to 100 per batch, idempotent submission via `Idempotency-Key`.
 - Optional spot-based TP from the broker quote at execution time (BUY: ask + distance; SELL: bid - distance).
 - Terminal supervision: terminals are launched on registration, re-launched when orders arrive for a stopped terminal, and reconciled on bridge start (pre-warm on boot).
+- Optional `-RefreshTerminals` startup mode closes only portable MT5 processes under the managed JoeMoney slots folder, then refreshes and relaunches active accounts from the master EA/chart files.
 - Explicit per-account connection status from the EA heartbeat — bridge or EA polling alone does not mean the broker connection is up.
 
 ## VPS Setup and Run (Windows Server)
@@ -43,6 +44,20 @@ Open the master in portable mode from a PowerShell window:
 
 Log in once so MT5 caches the broker server, then log out. If Caddy and the bridge
 are already running, use this command by itself; do not run `start-all.ps1` again.
+
+To refresh all running JoeMoney account terminals after updating the master EA or
+chart profile, stop the current bridge window, then run:
+
+```powershell
+& "C:\JoeMoney\final\start-bridge.ps1" -RefreshTerminals
+```
+
+This closes terminal processes whose executable is under
+`C:\MT5Terminals\JoeMoney\`, then recopies the configured EX5/chart template and
+relaunches active accounts. It does not close the master terminal or MT5 processes
+outside that folder. Open broker positions remain at the broker, but the terminals
+will be disconnected briefly. Update/compile the master EX5 and save its chart
+template before running the refresh.
 
 ### 2. Compile the EA and save the master chart
 

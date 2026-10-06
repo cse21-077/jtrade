@@ -1,3 +1,5 @@
+param([switch]$RefreshTerminals)
+
 $ErrorActionPreference = 'Stop'
 try {
 Set-Location $PSScriptRoot
@@ -83,7 +85,11 @@ Write-Host 'Bridge key (bake into the PWA as VITE_JOEMONEY_BRIDGE_KEY in Vercel,
 Write-Host $bridgeKey
 Write-Host ''
 Write-Host 'Re-launching terminals for active accounts that are not running...' -ForegroundColor DarkGray
-& python -c "import bridge; bridge.reconcile_on_boot()"
+if ($RefreshTerminals) {
+    Write-Warning 'Refresh requested: all terminal64.exe processes under the managed JoeMoney slots directory will be closed, refreshed from the master EA/chart files, and restarted. Positions already held by the broker remain open, but monitoring is interrupted briefly.'
+}
+$refreshValue = if ($RefreshTerminals) { 'True' } else { 'False' }
+& python -c "import bridge; bridge.reconcile_on_boot(force_refresh=$refreshValue)"
 if ($LASTEXITCODE -ne 0) {
     throw "Terminal reconciliation failed with exit code $LASTEXITCODE. Check that Python is installed and available as 'python'."
 }

@@ -65,6 +65,35 @@ def running_logins(ttl: float = 10.0) -> set[str]:
     return set(logins)
 
 
+def stop_managed_terminals(timeout_sec: int = 15) -> None:
+    """Close terminals launched from the managed JoeMoney slots directory only."""
+    root = str(TERMINALS_DIR.resolve()).replace("'", "''").rstrip("\\") + "\\"
+    ps_cmd = (
+        f"$root = '{root}'; "
+        "$items = Get-CimInstance Win32_Process -Filter \"name='terminal64.exe'\" | "
+        "Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) }; "
+        "foreach ($item in $items) { "
+        "$process = Get-Process -Id $item.ProcessId -ErrorAction SilentlyContinue; "
+        "if ($process) { [void]$process.CloseMainWindow(); "
+        f"if (-not $process.WaitForExit({int(timeout_sec) * 1000})) {{ $process.Kill(); $process.WaitForExit() }} "
+        "} } "
+        "$remaining = Get-CimInstance Win32_Process -Filter \"name='terminal64.exe'\" | "
+        "Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) }; "
+        "if ($remaining) { $remaining | ForEach-Object { $_.ExecutablePath }; exit 1 }"
+    )
+    result = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
+        capture_output=True,
+        text=True,
+        timeout=timeout_sec + 15,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stdout.strip() or result.stderr.strip() or "Could not close every managed MT5 terminal.")
+    global _running_cache
+    with _running_lock:
+        _running_cache = (set(), 0.0)
+
+
 def assign_slot(used_folders: set[str]) -> Path:
     """Find a terminal folder for a new account: reuse a free existing slot, else clone the master."""
     used = {normalize_folder(folder) for folder in used_folders}
