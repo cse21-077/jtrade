@@ -89,6 +89,10 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
   const [lotSize, setLotSize] = useState<number>(0.1);
   const [stepDirection, setStepDirection] = useState<'down' | 'up'>('down');
   const [ordersPerLevel, setOrdersPerLevel] = useState<number>(1);
+  const [tpEnabled, setTpEnabled] = useState(false);
+  const [tpDistance, setTpDistance] = useState<number>(0.5);
+  const [slEnabled, setSlEnabled] = useState(false);
+  const [slDistance, setSlDistance] = useState<number>(0.5);
 
   const [isDeploying, setIsDeploying] = useState(false);
   const lastAlignedKey = useRef('');
@@ -224,6 +228,22 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
       });
       return null;
     }
+    if (totalOrders > 100) {
+      onTradeNotice({
+        success: false,
+        message: `This grid places ${totalOrders} orders (levels × positions per price); the bridge accepts at most 100. Reduce orders or positions per price.`,
+        trades: [],
+      });
+      return null;
+    }
+    if (tpEnabled && (!Number.isFinite(tpDistance) || tpDistance <= 0)) {
+      onTradeNotice({ success: false, message: 'TP distance must be greater than zero.', trades: [] });
+      return null;
+    }
+    if (slEnabled && (!Number.isFinite(slDistance) || slDistance <= 0)) {
+      onTradeNotice({ success: false, message: 'SL distance must be greater than zero.', trades: [] });
+      return null;
+    }
 
     setIsDeploying(true);
     const createdAt = Date.now();
@@ -261,8 +281,10 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
                 : (tradeAction === 'SELL_LIMIT' ? 'SELL_LIMIT' : 'SELL_STOP')),
             volume: level.lotSize,
             entry_price: isMarketOrder ? 0 : level.price,
-            tp_enabled: false,
-            tp_distance: 0,
+            tp_enabled: tpEnabled,
+            tp_distance: tpEnabled ? tpDistance : 0,
+            sl_enabled: slEnabled,
+            sl_distance: slEnabled ? slDistance : 0,
           });
         }
       }
@@ -707,6 +729,87 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Positions per price: each level opens N identical orders at that exact price */}
+        <div className="pt-1">
+          <div className="flex items-center justify-between text-xs mb-1">
+            <label className="font-bold text-[#fafafa]">Positions per Price</label>
+            <span className="text-[10px] text-[#52525b] font-medium">Copies at each level</span>
+          </div>
+
+          <input
+            type="number"
+            min="1"
+            max="20"
+            inputMode="numeric"
+            value={ordersPerLevel}
+            onChange={(e) => setOrdersPerLevel(Math.min(20, Math.max(1, parseInt(e.target.value, 10) || 1)))}
+            className="w-full px-3 py-2 rounded-xl bg-[#1f1f23] border border-[#26262b] font-mono text-sm font-bold text-white focus:ring-2 focus:ring-[#d6f655]"
+          />
+
+          <div className="grid grid-cols-4 gap-1 mt-1.5">
+            {[1, 3, 5, 10].map((cnt) => (
+              <button
+                key={cnt}
+                type="button"
+                onClick={() => setOrdersPerLevel(cnt)}
+                className={`py-1 rounded-md text-[9px] font-bold transition cursor-pointer text-center ${
+                  ordersPerLevel === cnt ? 'bg-[#d6f655] text-[#0e0e10]' : 'bg-[#1f1f23] text-[#a1a1aa]'
+                }`}
+              >
+                {cnt}×
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* TP / SL attachments (distances from the broker's live quote) */}
+        <div className="space-y-3 pt-3 border-t border-[#26262b]">
+          <div>
+            <label className="flex items-center gap-2 text-xs font-bold text-[#fafafa] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={tpEnabled}
+                onChange={(e) => setTpEnabled(e.target.checked)}
+                className="h-4 w-4 accent-[#d6f655]"
+              />
+              Take Profit <span className="text-[10px] font-medium text-[#52525b]">distance from live spot</span>
+            </label>
+            {tpEnabled && (
+              <input
+                type="number"
+                step="any"
+                min="0"
+                inputMode="decimal"
+                value={tpDistance}
+                onChange={(e) => setTpDistance(parseFloat(e.target.value) || 0)}
+                className="mt-1.5 w-full px-3 py-2 rounded-xl bg-[#1f1f23] border border-[#26262b] font-mono text-sm font-bold text-white focus:ring-2 focus:ring-[#d6f655]"
+              />
+            )}
+          </div>
+          <div>
+            <label className="flex items-center gap-2 text-xs font-bold text-[#fafafa] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={slEnabled}
+                onChange={(e) => setSlEnabled(e.target.checked)}
+                className="h-4 w-4 accent-[#d6f655]"
+              />
+              Stop Loss <span className="text-[10px] font-medium text-[#52525b]">distance from live spot</span>
+            </label>
+            {slEnabled && (
+              <input
+                type="number"
+                step="any"
+                min="0"
+                inputMode="decimal"
+                value={slDistance}
+                onChange={(e) => setSlDistance(parseFloat(e.target.value) || 0)}
+                className="mt-1.5 w-full px-3 py-2 rounded-xl bg-[#1f1f23] border border-[#26262b] font-mono text-sm font-bold text-white focus:ring-2 focus:ring-[#d6f655]"
+              />
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Order Summary + Review CTA */}
@@ -780,6 +883,9 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
                 ['Number of Orders', String(totalOrders)],
                 ['Total Volume', `${totalVolume} lots`],
                 ...(!isMarketOrder ? [['Step Spacing', `${stepSpacing} ${stepDirection}`]] : []),
+                ...(ordersPerLevel > 1 ? [['Positions per Price', `${ordersPerLevel}×`]] : []),
+                ...(tpEnabled ? [['Take Profit', `+${tpDistance} from spot`]] : []),
+                ...(slEnabled ? [['Stop Loss', `-${slDistance} from spot`]] : []),
                 ['MT5 Account', mt5Account ? mt5Account.login : 'Not connected'],
               ] as Array<[string, string]>).map(([label, value]) => (
                 <div key={label} className="flex items-center justify-between text-xs gap-3">

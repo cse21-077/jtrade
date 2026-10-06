@@ -69,6 +69,10 @@ def connect_db(path: Path | None = None) -> sqlite3.Connection:
     order_columns = {row[1] for row in connection.execute("PRAGMA table_info(orders)")}
     if "login" not in order_columns:
         connection.execute("ALTER TABLE orders ADD COLUMN login TEXT NOT NULL DEFAULT ''")
+    if "sl_enabled" not in order_columns:
+        connection.execute("ALTER TABLE orders ADD COLUMN sl_enabled INTEGER NOT NULL DEFAULT 0")
+    if "sl_distance" not in order_columns:
+        connection.execute("ALTER TABLE orders ADD COLUMN sl_distance REAL NOT NULL DEFAULT 0")
     connection.execute(
         """CREATE TABLE IF NOT EXISTS batches (
             idempotency_key TEXT PRIMARY KEY,
@@ -207,10 +211,11 @@ def validate_order(item: object) -> dict:
         volume = float(item.get("volume"))
         entry_price = float(item.get("entry_price", 0))
         tp_distance = float(item.get("tp_distance", 0))
+        sl_distance = float(item.get("sl_distance", 0))
     except (TypeError, ValueError):
-        raise ValueError("volume, entry_price, and tp_distance must be numbers.") from None
-    if not all(math.isfinite(value) for value in (volume, entry_price, tp_distance)):
-        raise ValueError("volume, entry_price, and tp_distance must be finite numbers.")
+        raise ValueError("volume, entry_price, tp_distance, and sl_distance must be numbers.") from None
+    if not all(math.isfinite(value) for value in (volume, entry_price, tp_distance, sl_distance)):
+        raise ValueError("volume, entry_price, tp_distance, and sl_distance must be finite numbers.")
     if not 0 < volume <= 100:
         raise ValueError("volume must be greater than 0 and no more than 100 lots.")
     market = order_type.startswith("MARKET_")
@@ -223,6 +228,11 @@ def validate_order(item: object) -> dict:
         raise ValueError("tp_enabled must be a boolean.")
     if tp_distance < 0 or (tp_enabled and tp_distance <= 0):
         raise ValueError("Enabled TP requires tp_distance greater than zero.")
+    sl_enabled = item.get("sl_enabled", False)
+    if not isinstance(sl_enabled, bool):
+        raise ValueError("sl_enabled must be a boolean.")
+    if sl_distance < 0 or (sl_enabled and sl_distance <= 0):
+        raise ValueError("Enabled SL requires sl_distance greater than zero.")
     return {
         "symbol": symbol,
         "order_type": order_type,
@@ -230,6 +240,8 @@ def validate_order(item: object) -> dict:
         "entry_price": entry_price,
         "tp_enabled": tp_enabled,
         "tp_distance": tp_distance,
+        "sl_enabled": sl_enabled,
+        "sl_distance": sl_distance,
     }
 
 
@@ -491,7 +503,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
             fields = [
                 row["id"], row["symbol"], row["order_type"], f'{row["volume"]:.8f}',
                 f'{row["entry_price"]:.10f}', "1" if row["tp_enabled"] else "0",
-                f'{row["tp_distance"]:.10f}',
+                f'{row["tp_distance"]:.10f}', "1" if row["sl_enabled"] else "0",
+                f'{row["sl_distance"]:.10f}',
             ]
             return self._send(200, "|".join(fields), "text/plain; charset=utf-8")
         if parsed.path == "/v1/closes/next":
@@ -661,11 +674,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     cached["replayed"] = True
                     return self._send(200, cached)
                 db.executemany(
-                    "INSERT INTO orders(id,login,symbol,order_type,volume,entry_price,tp_enabled,tp_distance,status,created_at,updated_at) "
-                    "VALUES(?,?,?,?,?,?,?,?,'queued',?,?)",
+                    "INSERT INTO orders(id,login,symbol,order_type,volume,entry_price,tp_enabled,tp_distance,sl_enabled,sl_distance,status,created_at,updated_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,'queued',?,?)",
                     [
                         (record["id"], login, order["symbol"], order["order_type"], order["volume"],
-                         order["entry_price"], int(order["tp_enabled"]), order["tp_distance"], now, now)
+                         order["entry_price"], int(order["tp_enabled"]), order["tp_distance"],
+                         int(order["sl_enabled"]), order["sl_distance"], now, now)
                         for record, order in zip(created, validated)
                     ],
                 )

@@ -29,7 +29,7 @@ int OnInit()
    if(PollSeconds < 1 || ReportSeconds < 1 || StringLen(EaToken) < 32)
       return INIT_PARAMETERS_INCORRECT;
    EventSetTimer(PollSeconds);
-   Print("JoeMoney EA build 4.03 ready. MT5 login: ", (long)AccountInfoInteger(ACCOUNT_LOGIN));
+   Print("JoeMoney EA build 5.00 ready. MT5 login: ", (long)AccountInfoInteger(ACCOUNT_LOGIN));
    Print("EA auth token prefix: ", StringSubstr(EaToken, 0, 10), "… (", StringLen(EaToken), " chars, compiled in)");
    Print("Allow WebRequest for ", BridgeUrl, " in MT5 Options > Expert Advisors.");
    return INIT_SUCCEEDED;
@@ -121,7 +121,7 @@ void PollBridge()
    string fields[];
    ushort separator = StringGetCharacter("|", 0);
    int count = StringSplit(response, separator, fields);
-   if(count != 7)
+   if(count != 9)
    {
       Print("JoeMoney received malformed command: ", response);
       return;
@@ -134,12 +134,15 @@ void PollBridge()
    double entry_price = StringToDouble(fields[4]);
    bool tp_enabled = fields[5] == "1";
    double tp_distance = StringToDouble(fields[6]);
+   bool sl_enabled = fields[7] == "1";
+   double sl_distance = StringToDouble(fields[8]);
 
       Print("JoeMoney processing ", order_type, " ", symbol, " volume ", DoubleToString(volume, 2),
          " entry ", DoubleToString(entry_price, 8), " command ", command_id);
    string message;
    ulong ticket = 0;
-   bool placed = ExecuteOrder(symbol, order_type, volume, entry_price, tp_enabled, tp_distance, ticket, message);
+   bool placed = ExecuteOrder(symbol, order_type, volume, entry_price, tp_enabled, tp_distance,
+                              sl_enabled, sl_distance, ticket, message);
       Print("JoeMoney execution ", (placed ? "accepted" : "rejected"), " command ", command_id,
          ": ", message);
    SendResult(command_id, placed, ticket, message);
@@ -147,6 +150,7 @@ void PollBridge()
 
 bool ExecuteOrder(const string symbol, const string order_type, const double requested_volume,
                   const double requested_entry, const bool tp_enabled, const double tp_distance,
+                  const bool sl_enabled, const double sl_distance,
                   ulong &ticket, string &message)
 {
    ticket = 0;
@@ -181,15 +185,25 @@ bool ExecuteOrder(const string symbol, const string order_type, const double req
 
    int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
    double tp = 0;
+   double sl = 0;
    bool is_buy = StringFind(order_type, "BUY") >= 0;
    bool market = StringFind(order_type, "MARKET_") == 0;
+   double stops_distance = SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL) * SymbolInfoDouble(symbol, SYMBOL_POINT);
    if(tp_enabled)
    {
       tp = NormalizeDouble((is_buy ? tick.ask + tp_distance : tick.bid - tp_distance), digits);
-      double stops_distance = SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL) * SymbolInfoDouble(symbol, SYMBOL_POINT);
       if((is_buy && tp <= tick.ask + stops_distance) || (!is_buy && tp >= tick.bid - stops_distance))
       {
          message = "Spot-based TP is inside the broker's minimum stop distance.";
+         return false;
+      }
+   }
+   if(sl_enabled)
+   {
+      sl = NormalizeDouble((is_buy ? tick.ask - sl_distance : tick.bid + sl_distance), digits);
+      if((is_buy && sl >= tick.ask - stops_distance) || (!is_buy && sl <= tick.bid + stops_distance))
+      {
+         message = "Spot-based SL is inside the broker's minimum stop distance.";
          return false;
       }
    }
@@ -202,6 +216,7 @@ bool ExecuteOrder(const string symbol, const string order_type, const double req
    request.deviation = SlippagePoints;
    request.type_time = ORDER_TIME_GTC;
    request.tp = tp;
+   request.sl = sl;
 
    if(order_type == "MARKET_BUY" || order_type == "MARKET_SELL")
    {
@@ -224,6 +239,11 @@ bool ExecuteOrder(const string symbol, const string order_type, const double req
       if(tp_enabled && ((is_buy && tp <= request.price) || (!is_buy && tp >= request.price)))
       {
          message = "Spot-based TP is not on the profit side of this pending entry; adjust entry or TP distance.";
+         return false;
+      }
+      if(sl_enabled && ((is_buy && sl >= request.price) || (!is_buy && sl <= request.price)))
+      {
+         message = "Spot-based SL is not on the loss side of this pending entry; adjust entry or SL distance.";
          return false;
       }
    }
