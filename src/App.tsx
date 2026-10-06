@@ -9,7 +9,7 @@ import { BottomNavBar, AppTab } from './components/BottomNavBar';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { Mt5AccountsScreen } from './components/Mt5AccountsScreen';
 import { derivService } from './services/derivWs';
-import { clearStoredMt5Account, closeMt5Positions, deactivateMt5Account, getMentorToken, getMt5Close, getStoredMt5Account, StoredMt5Account } from './services/joemoneyMt5Api';
+import { clearStoredMt5Account, closeMt5Positions, deactivateMt5Account, getMentorToken, getMt5Close, getMt5Positions, getStoredMt5Account, StoredMt5Account } from './services/joemoneyMt5Api';
 import { getMt5MidPrice } from './services/marketPrice';
 import { getMt5Quote, useMt5Prices } from './hooks/useMt5Prices';
 import { DerivAccount, MarketSymbol, PlacedOrder, TradeNotice } from './types/trading';
@@ -62,6 +62,29 @@ export default function App() {
     });
     return unsub;
   }, []);
+
+  // Fill detection: the EA snapshots open positions in its price report, so a
+  // pending limit/stop order whose ticket appears as a position has filled and
+  // becomes closable from the Orders page.
+  useEffect(() => {
+    if (!mt5Account) return;
+    const timer = window.setInterval(async () => {
+      try {
+        const { positions } = await getMt5Positions(getMentorToken(), mt5Account.login);
+        if (positions.length === 0) return;
+        const tickets = new Set(positions.map((position) => position.ticket));
+        setOrders((prev) => prev.map((order) =>
+          (order.status === 'PENDING' || order.status === 'CLAIMED') &&
+          order.mt5Ticket && tickets.has(String(order.mt5Ticket))
+            ? { ...order, status: 'FILLED', filledAt: order.filledAt ?? Date.now() }
+            : order
+        ));
+      } catch {
+        // transient poll failure; the next tick retries
+      }
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [mt5Account]);
 
   const handleSplashConnected = (acc: DerivAccount) => {
     setAccount(acc);
@@ -147,8 +170,25 @@ export default function App() {
                 orders={orders}
                 spotPrice={effectiveSpotPrice}
                 mt5PriceAge={mt5PriceAge}
-                onCancelOrder={(id) => setOrders((prev) => prev.filter((o) => o.id !== id))}
-                onCancelAll={() => setOrders((prev) => prev.filter((o) => o.status === 'FILLED'))}
+                onCancelOrder={async (id) => {
+                  const target = orders.find((o) => o.id === id);
+                  if (target?.mt5Ticket && mt5Account) {
+                    const token = getMentorToken();
+                    const batch = await closeMt5Positions(token, mt5Account.login, [String(target.mt5Ticket)], 'cancel');
+                    await pollMt5Close(token, batch.closes[0].id);
+                  }
+                  setOrders((prev) => prev.filter((o) => o.id !== id));
+                }}
+                onCancelAll={async () => {
+                  const pending = orders.filter((o) => o.status === 'PENDING' && o.mt5Ticket);
+                  if (pending.length > 0) {
+                    if (!mt5Account) throw new Error('Connect an MT5 account before cancelling orders.');
+                    const token = getMentorToken();
+                    const batch = await closeMt5Positions(token, mt5Account.login, pending.map((o) => String(o.mt5Ticket)), 'cancel');
+                    await Promise.all(batch.closes.map((close) => pollMt5Close(token, close.id)));
+                  }
+                  setOrders((prev) => prev.filter((o) => o.status !== 'PENDING'));
+                }}
                 onClosePosition={async (id) => {
                   const target = orders.find((o) => o.id === id);
                   if (target?.derivContractId) {

@@ -196,14 +196,30 @@ export interface Mt5CloseBatch {
   closes: Array<{ id: string; status: Mt5CloseStatus }>;
 }
 
-export const closeMt5Positions = (token: string, login: string, tickets: string[] | 'all') =>
+export interface Mt5Position {
+  ticket: string;
+  symbol: string;
+  pos_type: string;
+  volume: number;
+  updated_at: number;
+}
+
+export const closeMt5Positions = (
+  token: string,
+  login: string,
+  tickets: string[] | 'all',
+  action: 'close' | 'cancel' = 'close',
+) =>
   request<Mt5CloseBatch>('/v1/positions/close', token, {
     method: 'POST',
-    body: JSON.stringify({ login, tickets }),
+    body: JSON.stringify({ login, tickets, action }),
   });
 
 export const getMt5Close = (token: string, closeId: string) =>
   request<Mt5CloseRequest>(`/v1/closes/${encodeURIComponent(closeId)}`, token);
+
+export const getMt5Positions = (token: string, login: string) =>
+  request<{ positions: Mt5Position[] }>(`/v1/positions?login=${encodeURIComponent(login)}`, token);
 
 export const getMt5Prices = (token: string, opts?: { login?: string; symbols?: string[] }) => {
   const params = new URLSearchParams();

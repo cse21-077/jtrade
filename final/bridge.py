@@ -125,6 +125,19 @@ def connect_db(path: Path | None = None) -> sqlite3.Connection:
     close_columns = {row[1] for row in connection.execute("PRAGMA table_info(closes)")}
     if "login" not in close_columns:
         connection.execute("ALTER TABLE closes ADD COLUMN login TEXT NOT NULL DEFAULT ''")
+    if "action" not in close_columns:
+        connection.execute("ALTER TABLE closes ADD COLUMN action TEXT NOT NULL DEFAULT 'close'")
+    connection.execute(
+        """CREATE TABLE IF NOT EXISTS positions (
+            login TEXT NOT NULL,
+            ticket TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            pos_type TEXT NOT NULL,
+            volume REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            PRIMARY KEY(login, ticket)
+        )"""
+    )
     connection.execute(
         """CREATE TABLE IF NOT EXISTS accounts (
             login TEXT PRIMARY KEY,
@@ -253,6 +266,38 @@ def validate_ticks(payload: object) -> tuple[str, list[dict]]:
                           "volume_min": volume_min, "volume_max": volume_max, "volume_step": volume_step,
                           "volume_limits_known": has_volume_limits})
     return login, validated
+
+
+def validate_positions(payload: object) -> tuple[bool, list[dict]]:
+    """Validate an optional open-position snapshot; presence means replace the stored snapshot."""
+    if not isinstance(payload, dict) or "positions" not in payload:
+        return False, []
+    raw = payload["positions"]
+    if raw is None:
+        raise ValueError("positions must be a list when provided.")
+    if not isinstance(raw, list) or len(raw) > MAX_TICK_BATCH_SIZE:
+        raise ValueError(f"positions must contain 0-{MAX_TICK_BATCH_SIZE} entries.")
+    validated = []
+    for position in raw:
+        if not isinstance(position, dict):
+            raise ValueError("Each position must be an object.")
+        ticket = str(position.get("ticket", "")).strip()
+        symbol = position.get("symbol")
+        pos_type = str(position.get("type", "")).strip().lower()
+        if not ticket.isdigit() or not 1 <= len(ticket) <= 20:
+            raise ValueError("Position ticket must be numeric.")
+        if not isinstance(symbol, str) or not SYMBOL_RE.fullmatch(symbol) or "|" in symbol:
+            raise ValueError("Position symbol is invalid.")
+        if pos_type not in {"buy", "sell"}:
+            raise ValueError("Position type must be buy or sell.")
+        try:
+            volume = float(position.get("volume"))
+        except (TypeError, ValueError):
+            raise ValueError("Position volume must be a number.") from None
+        if not math.isfinite(volume) or volume <= 0:
+            raise ValueError("Position volume must be a positive finite number.")
+        validated.append({"ticket": ticket, "symbol": symbol, "type": pos_type, "volume": volume})
+    return True, validated
 
 
 def reconcile_on_boot(force_refresh: bool = False) -> None:
@@ -469,7 +514,18 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     return self._send(204)
                 db.execute("UPDATE closes SET status='claimed',updated_at=? WHERE id=? AND status='queued'", (now, row["id"]))
                 db.commit()
-            return self._send(200, row["id"] + "|" + row["ticket"], "text/plain; charset=utf-8")
+            return self._send(200, row["id"] + "|" + row["ticket"] + "|" + row["action"], "text/plain; charset=utf-8")
+        if parsed.path == "/v1/positions":
+            if not client_authed(self.headers.get("Authorization", "")):
+                return self._send(401, {"error": "Unauthorized"})
+            login = parse_qs(parsed.query).get("login", [""])[0].strip()
+            if not LOGIN_RE.fullmatch(login):
+                return self._send(400, {"error": "login must be 4-20 digits."})
+            with db_session() as db:
+                rows = db.execute(
+                    "SELECT ticket,symbol,pos_type,volume,updated_at FROM positions WHERE login=?", (login,)
+                ).fetchall()
+            return self._send(200, {"positions": [dict(row) for row in rows]})
         match = re.fullmatch(r"/v1/closes/([0-9a-f-]+)", parsed.path)
         if match:
             if not client_authed(self.headers.get("Authorization", "")):
@@ -631,6 +687,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 if not LOGIN_RE.fullmatch(login):
                     raise ValueError("Provide a numeric MT5 login for the close request.")
                 tickets = payload.get("tickets")
+                action = str(payload.get("action", "close")).strip().lower()
+                if action not in {"close", "cancel"}:
+                    raise ValueError("action must be close or cancel.")
                 if tickets == "all":
                     normalized = ["0"]
                 elif isinstance(tickets, list) and 1 <= len(tickets) <= MAX_BATCH_SIZE:
@@ -653,8 +712,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 now = time.time()
                 created = [{"id": str(uuid4()), "status": "queued"} for _ in normalized]
                 db.executemany(
-                    "INSERT INTO closes(id,login,ticket,status,created_at,updated_at) VALUES(?,?,?,'queued',?,?)",
-                    [(record["id"], login, ticket, now, now) for record, ticket in zip(created, normalized)],
+                    "INSERT INTO closes(id,login,ticket,action,status,created_at,updated_at) VALUES(?,?,?,?,'queued',?,?)",
+                    [(record["id"], login, ticket, action, now, now) for record, ticket in zip(created, normalized)],
                 )
             if login not in tm.running_logins():
                 threading.Thread(target=tm.ensure_terminal, args=(dict(account),), daemon=True).start()
@@ -724,6 +783,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             try:
                 payload = self._read_json()
                 login, ticks = validate_ticks(payload)
+                has_positions, positions = validate_positions(payload)
             except (json.JSONDecodeError, ValueError, AttributeError) as error:
                 return self._send(400, {"error": str(error)})
             with db_session() as db:
@@ -740,7 +800,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
                                         [(login, tick["symbol"], tick["bid"], tick["ask"], tick["volume_min"],
                                             tick["volume_max"], tick["volume_step"], int(tick["volume_limits_known"]), now) for tick in ticks],
                 )
-            return self._send(200, {"status": "recorded", "count": len(ticks)})
+                if has_positions:
+                    db.execute("DELETE FROM positions WHERE login=?", (login,))
+                if positions:
+                    db.executemany(
+                        "INSERT INTO positions(login,ticket,symbol,pos_type,volume,updated_at) VALUES(?,?,?,?,?,?)",
+                        [(login, pos["ticket"], pos["symbol"], pos["type"], pos["volume"], now) for pos in positions],
+                    )
+            return self._send(200, {"status": "recorded", "count": len(ticks), "positions": len(positions)})
         if parsed.path == "/v1/terminal/status":
             if not ea_authed(self.headers.get("Authorization", "")):
                 return self._send(401, {"error": "Unauthorized"})

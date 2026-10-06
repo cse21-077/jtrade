@@ -25,20 +25,20 @@ export const SYMBOL_CATALOG: MarketSymbol[] = [
   { symbol: 'Step Index 75', displayName: 'Step Index 75', category: 'Synthetics', decimals: 4, minLot: 0.01, lotStep: 0.01, defaultPrice: 10300 },
   { symbol: 'Step Index 100', displayName: 'Step Index 100', category: 'Synthetics', decimals: 4, minLot: 0.01, lotStep: 0.01, defaultPrice: 6100 },
   // Metals
-  { symbol: 'frxXAUUSD', displayName: 'Gold / USD', category: 'Metals', decimals: 2, minLot: 0.01, lotStep: 0.01, defaultPrice: 2653.0 },
-  { symbol: 'frxXAGUSD', displayName: 'Silver / USD', category: 'Metals', decimals: 3, minLot: 0.01, lotStep: 0.01, defaultPrice: 31.5 },
+  { symbol: 'XAUUSD', displayName: 'Gold / USD', category: 'Metals', decimals: 2, minLot: 0.01, lotStep: 0.01, defaultPrice: 2653.0 },
+  { symbol: 'XAGUSD', displayName: 'Silver / USD', category: 'Metals', decimals: 3, minLot: 0.01, lotStep: 0.01, defaultPrice: 31.5 },
   // Forex majors
-  { symbol: 'frxEURUSD', displayName: 'EUR / USD', category: 'Forex', decimals: 5, minLot: 0.01, lotStep: 0.01, defaultPrice: 1.085 },
-  { symbol: 'frxGBPUSD', displayName: 'GBP / USD', category: 'Forex', decimals: 5, minLot: 0.01, lotStep: 0.01, defaultPrice: 1.27 },
-  { symbol: 'frxUSDJPY', displayName: 'USD / JPY', category: 'Forex', decimals: 3, minLot: 0.01, lotStep: 0.01, defaultPrice: 149.5 },
-  { symbol: 'frxAUDUSD', displayName: 'AUD / USD', category: 'Forex', decimals: 5, minLot: 0.01, lotStep: 0.01, defaultPrice: 0.655 },
-  { symbol: 'frxUSDCAD', displayName: 'USD / CAD', category: 'Forex', decimals: 5, minLot: 0.01, lotStep: 0.01, defaultPrice: 1.36 },
-  { symbol: 'frxUSDCHF', displayName: 'USD / CHF', category: 'Forex', decimals: 5, minLot: 0.01, lotStep: 0.01, defaultPrice: 0.88 },
-  { symbol: 'frxEURGBP', displayName: 'EUR / GBP', category: 'Forex', decimals: 5, minLot: 0.01, lotStep: 0.01, defaultPrice: 0.855 },
-  { symbol: 'frxNZDUSD', displayName: 'NZD / USD', category: 'Forex', decimals: 5, minLot: 0.01, lotStep: 0.01, defaultPrice: 0.61 },
+  { symbol: 'EURUSD', displayName: 'EUR / USD', category: 'Forex', decimals: 5, minLot: 0.01, lotStep: 0.01, defaultPrice: 1.085 },
+  { symbol: 'GBPUSD', displayName: 'GBP / USD', category: 'Forex', decimals: 5, minLot: 0.01, lotStep: 0.01, defaultPrice: 1.27 },
+  { symbol: 'USDJPY', displayName: 'USD / JPY', category: 'Forex', decimals: 3, minLot: 0.01, lotStep: 0.01, defaultPrice: 149.5 },
+  { symbol: 'AUDUSD', displayName: 'AUD / USD', category: 'Forex', decimals: 5, minLot: 0.01, lotStep: 0.01, defaultPrice: 0.655 },
+  { symbol: 'USDCAD', displayName: 'USD / CAD', category: 'Forex', decimals: 5, minLot: 0.01, lotStep: 0.01, defaultPrice: 1.36 },
+  { symbol: 'USDCHF', displayName: 'USD / CHF', category: 'Forex', decimals: 5, minLot: 0.01, lotStep: 0.01, defaultPrice: 0.88 },
+  { symbol: 'EURGBP', displayName: 'EUR / GBP', category: 'Forex', decimals: 5, minLot: 0.01, lotStep: 0.01, defaultPrice: 0.855 },
+  { symbol: 'NZDUSD', displayName: 'NZD / USD', category: 'Forex', decimals: 5, minLot: 0.01, lotStep: 0.01, defaultPrice: 0.61 },
   // Crypto
-  { symbol: 'cryBTCUSD', displayName: 'Bitcoin / USD', category: 'Crypto', decimals: 2, minLot: 0.01, lotStep: 0.01, defaultPrice: 65420.0 },
-  { symbol: 'cryETHUSD', displayName: 'Ethereum / USD', category: 'Crypto', decimals: 2, minLot: 0.01, lotStep: 0.01, defaultPrice: 3420.0 },
+  { symbol: 'BTCUSD', displayName: 'Bitcoin / USD', category: 'Crypto', decimals: 2, minLot: 0.01, lotStep: 0.01, defaultPrice: 65420.0 },
+  { symbol: 'ETHUSD', displayName: 'Ethereum / USD', category: 'Crypto', decimals: 2, minLot: 0.01, lotStep: 0.01, defaultPrice: 3420.0 },
 ];
 
 export const searchSymbols = (query: string): MarketSymbol[] => {

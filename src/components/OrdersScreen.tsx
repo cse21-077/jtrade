@@ -64,6 +64,8 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
   const [filter, setFilter] = useState<'all' | 'filled' | 'pending'>('all');
   const [isBulkClosing, setIsBulkClosing] = useState(false);
   const [closingId, setClosingId] = useState<string | null>(null);
+  const [isCancellingAll, setIsCancellingAll] = useState(false);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -102,6 +104,30 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
       setErrorMessage(err?.message || 'Failed to close position');
     } finally {
       setClosingId(null);
+    }
+  };
+
+  const handleCancel = async (id: string) => {
+    setErrorMessage(null);
+    setCancellingId(id);
+    try {
+      await onCancelOrder(id);
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Failed to cancel order');
+    } finally {
+      setCancellingId(null);
+    }
+  };
+
+  const handleCancelAll = async () => {
+    setErrorMessage(null);
+    setIsCancellingAll(true);
+    try {
+      await onCancelAll();
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Failed to cancel pending orders');
+    } finally {
+      setIsCancellingAll(false);
     }
   };
 
@@ -175,11 +201,12 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
             </button>
             <button
               type="button"
-              onClick={onCancelAll}
-              className="p-2 text-[#52525b] hover:text-rose-400 transition cursor-pointer"
+              disabled={isCancellingAll}
+              onClick={handleCancelAll}
+              className="p-2 text-[#52525b] hover:text-rose-400 transition cursor-pointer disabled:opacity-50"
               title="Cancel Pending"
             >
-              <Trash2 className="w-4 h-4" />
+              {isCancellingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
             </button>
           </div>
         )}
@@ -359,10 +386,11 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
                   ) : (
                     <button
                       type="button"
-                      onClick={() => onCancelOrder(order.id)}
-                      className="ml-3 shrink-0 px-4 py-1.5 rounded-full border border-[#26262b] text-[#a1a1aa] hover:text-rose-400 hover:border-rose-400/40 font-bold text-[11px] transition cursor-pointer"
+                      disabled={cancellingId === order.id}
+                      onClick={() => handleCancel(order.id)}
+                      className="ml-3 shrink-0 px-4 py-1.5 rounded-full border border-[#26262b] text-[#a1a1aa] hover:text-rose-400 hover:border-rose-400/40 font-bold text-[11px] transition cursor-pointer disabled:opacity-50"
                     >
-                      Cancel
+                      {cancellingId === order.id ? 'Cancelling...' : 'Cancel'}
                     </button>
                   )}
                 </div>

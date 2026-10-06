@@ -9,7 +9,7 @@ input string BridgeUrl = "http://127.0.0.1:8765";
 string EaToken = "dab2da53cd7c4cd9ad0116a9a85f1dab814360e3e04a42c1a45b6f6b6a34b8c2";
 input int PollSeconds = 1;
 input int SlippagePoints = 20;
-input string ReportSymbols = "Volatility 10 Index,Volatility 25 Index,Volatility 50 Index,Volatility 75 Index,Volatility 100 Index,Volatility 10 (1s) Index,Volatility 25 (1s) Index,Volatility 50 (1s) Index,Volatility 75 (1s) Index,Volatility 100 (1s) Index,Boom 500 Index,Boom 1000 Index,Crash 500 Index,Crash 1000 Index,Step Index 10,Step Index 25,Step Index 50,Step Index 75,Step Index 100,frxXAUUSD,frxXAGUSD,frxEURUSD,frxGBPUSD,frxUSDJPY,frxAUDUSD,frxUSDCAD,frxUSDCHF,frxEURGBP,frxNZDUSD,BTCUSD,ETHUSD";
+input string ReportSymbols = "Volatility 10 Index,Volatility 25 Index,Volatility 50 Index,Volatility 75 Index,Volatility 100 Index,Volatility 10 (1s) Index,Volatility 25 (1s) Index,Volatility 50 (1s) Index,Volatility 75 (1s) Index,Volatility 100 (1s) Index,Boom 500 Index,Boom 1000 Index,Crash 500 Index,Crash 1000 Index,Step Index 10,Step Index 25,Step Index 50,Step Index 75,Step Index 100,XAUUSD,XAGUSD,EURUSD,GBPUSD,USDJPY,AUDUSD,USDCAD,USDCHF,EURGBP,NZDUSD,BTCUSD,ETHUSD";
 input int ReportSeconds = 3;
 
 ulong g_last_status_ms = 0;
@@ -298,7 +298,7 @@ void PollCloses()
 
    string fields[];
    ushort separator = StringGetCharacter("|", 0);
-   if(StringSplit(response, separator, fields) != 2)
+   if(StringSplit(response, separator, fields) != 3)
    {
       Print("JoeMoney received malformed close request: ", response);
       return;
@@ -306,12 +306,81 @@ void PollCloses()
 
    string close_id = fields[0];
    ulong ticket = (ulong)StringToInteger(fields[1]);
-   Print("JoeMoney processing close request ", close_id,
-         ticket == 0 ? " (all positions)" : " (position " + (string)ticket + ")");
+   string action = fields[2];
+   Print("JoeMoney processing ", action, " request ", close_id,
+         ticket == 0 ? " (all)" : " (ticket " + (string)ticket + ")");
    string message;
-   bool closed = ExecuteClose(ticket, message);
-   Print("JoeMoney close ", close_id, closed ? " succeeded" : " failed", ": ", message);
-   SendCloseResult(close_id, closed, message);
+   bool ok = false;
+   if(action == "cancel")
+      ok = ExecuteCancel(ticket, message);
+   else
+      ok = ExecuteClose(ticket, message);
+   Print("JoeMoney ", action, " ", close_id, ok ? " succeeded" : " failed", ": ", message);
+   SendCloseResult(close_id, ok, message);
+}
+
+bool ExecuteCancel(const ulong ticket, string &message)
+{
+   if(ticket == 0)
+   {
+      int removed = 0;
+      int failed = 0;
+      string first_failure = "";
+      for(int i = OrdersTotal() - 1; i >= 0; i--)
+      {
+         ulong order_ticket = OrderGetTicket(i);
+         if(order_ticket == 0)
+            continue;
+         ENUM_ORDER_TYPE order_type = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
+         if(order_type == ORDER_TYPE_BUY || order_type == ORDER_TYPE_SELL)
+            continue; // market position, not a pending order
+         string one_message;
+         if(RemoveOnePending(order_ticket, one_message))
+            removed++;
+         else
+         {
+            failed++;
+            if(StringLen(first_failure) == 0)
+               first_failure = one_message;
+         }
+      }
+      message = "Removed " + IntegerToString(removed) + " pending order(s)" +
+                (failed > 0 ? ", " + IntegerToString(failed) + " failed: " + first_failure : "");
+      return failed == 0 && removed > 0;
+   }
+   if(!OrderSelect(ticket))
+   {
+      message = "Order " + (string)ticket + " not found; it may already be filled or cancelled.";
+      return false;
+   }
+   ENUM_ORDER_TYPE order_type = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
+   if(order_type == ORDER_TYPE_BUY || order_type == ORDER_TYPE_SELL)
+   {
+      message = "Ticket " + (string)ticket + " is a market position, not a pending order.";
+      return false;
+   }
+   return RemoveOnePending(ticket, message);
+}
+
+bool RemoveOnePending(const ulong order_ticket, string &message)
+{
+   MqlTradeRequest request = {};
+   MqlTradeResult result = {};
+   request.action = TRADE_ACTION_REMOVE;
+   request.order = order_ticket;
+   ResetLastError();
+   if(!OrderSend(request, result))
+   {
+      message = "OrderSend failed, error " + IntegerToString(GetLastError());
+      return false;
+   }
+   if(result.retcode != TRADE_RETCODE_DONE)
+   {
+      message = "Broker rejected removal, retcode " + IntegerToString((int)result.retcode) + ": " + result.comment;
+      return false;
+   }
+   message = "Removed pending order " + (string)order_ticket;
+   return true;
 }
 
 bool ExecuteClose(const ulong ticket, string &message)
@@ -451,6 +520,7 @@ void ReportPrices()
       return;
 
    string ticks = "";
+   string positions = "";
    string skipped = "";
    int reported = 0;
    for(int i = 0; i < count && reported < 200; i++)
@@ -485,6 +555,18 @@ void ReportPrices()
                ",\"volume_step\":" + DoubleToString(volume_step, 4) + "}";
       reported++;
    }
+   for(int i = PositionsTotal() - 1; i >= 0 && i < 200; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if(StringLen(positions) > 0)
+         positions += ",";
+      string position_type = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? "buy" : "sell";
+      positions += "{\"ticket\":\"" + (string)ticket + "\",\"symbol\":\"" +
+                   JsonEscape(PositionGetString(POSITION_SYMBOL)) + "\",\"type\":\"" + position_type +
+                   "\",\"volume\":" + DoubleToString(PositionGetDouble(POSITION_VOLUME), 8) + "}";
+   }
    if(StringLen(skipped) > 0 && GetTickCount64() - g_last_symbol_warn_ms >= 60000)
    {
       g_last_symbol_warn_ms = GetTickCount64();
@@ -494,7 +576,7 @@ void ReportPrices()
       return;
 
    string login = IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN));
-   string body = "{\"login\":\"" + login + "\",\"ticks\":[" + ticks + "]}";
+   string body = "{\"login\":\"" + login + "\",\"ticks\":[" + ticks + "],\"positions\":[" + positions + "]}";
    string response;
    int status;
    bool sent = HttpRequest("POST", BridgeUrl + "/v1/prices", body, response, status);
