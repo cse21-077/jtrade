@@ -30,7 +30,6 @@ int OnInit()
       return INIT_PARAMETERS_INCORRECT;
    EventSetTimer(PollSeconds);
    Print("JoeMoney EA build 5.01 ready. MT5 login: ", (long)AccountInfoInteger(ACCOUNT_LOGIN));
-   Print("EA auth token prefix: ", StringSubstr(EaToken, 0, 10), "… (", StringLen(EaToken), " chars, compiled in)");
    Print("Allow WebRequest for ", BridgeUrl, " in MT5 Options > Expert Advisors.");
    return INIT_SUCCEEDED;
 }
