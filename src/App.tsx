@@ -71,7 +71,12 @@ export default function App() {
   };
 
   const handleDeployOrders = (newOrders: PlacedOrder[]) => {
-    setOrders((prev) => [...newOrders, ...prev]);
+    setOrders((prev) => {
+      const updates = new Map(newOrders.map((order) => [order.id, order]));
+      const existing = prev.map((order) => updates.get(order.id) ?? order);
+      const existingIds = new Set(prev.map((order) => order.id));
+      return [...newOrders.filter((order) => !existingIds.has(order.id)), ...existing];
+    });
     setActiveTab('orders');
   };
 
@@ -193,7 +198,7 @@ export default function App() {
                       : <CircleAlert className="h-5 w-5 shrink-0 text-rose-600" />}
                     <h2 id="trade-result-title" className="text-base font-bold text-slate-900">
                       {tradeNotice.success
-                        ? tradeNotice.errorMessage ? 'Partial execution' : 'Trades opened'
+                        ? tradeNotice.errorMessage ? 'Partial execution' : 'Orders submitted'
                         : 'Trade not opened'}
                     </h2>
                   </div>
@@ -211,7 +216,9 @@ export default function App() {
                   <div className="mt-4 max-h-48 space-y-2 overflow-y-auto border-y border-slate-100 py-3">
                     {tradeNotice.trades.map((trade, index) => (
                       <div key={`${trade.contractId || trade.symbol}-${index}`} className="flex items-center justify-between gap-2 text-xs">
-                        <span className="font-semibold text-slate-800">{trade.direction} {trade.symbol}</span>
+                        <span className="font-semibold text-slate-800">
+                          {trade.orderType ? `${trade.orderType.replace('_', ' ')} ` : `${trade.direction} `}{trade.symbol}
+                        </span>
                         <span className="text-right font-mono text-slate-500">
                           {trade.lotSize} lots{trade.contractId ? ` · #${trade.contractId}` : ''}
                         </span>

@@ -146,7 +146,11 @@ export const Mt5AccountsScreen: React.FC = () => {
       const distance = Number(tpDistance);
       const market = orderType.startsWith('MARKET_');
       const count = levels * copies;
+      const brokerSymbol = symbol.trim();
 
+      if (!/^[A-Za-z0-9._ -]{1,64}$/.test(brokerSymbol) || brokerSymbol.includes('|')) {
+        throw new Error('Enter an exact MT5 broker symbol, such as EURUSD, XAUUSD, or Volatility 10 Index.');
+      }
       if (!Number.isInteger(levels) || levels < 1 || levels > 25 || !Number.isInteger(copies) || copies < 1 || copies > 20) {
         throw new Error('Use 1-25 levels and 1-20 orders per level.');
       }
@@ -160,7 +164,7 @@ export const Mt5AccountsScreen: React.FC = () => {
         const entryPrice = market ? 0 : Number((initial + (spacingDirection === 'up' ? 1 : -1) * level * step).toFixed(10));
         for (let copy = 0; copy < copies; copy++) {
           payload.push({
-            symbol: symbol.trim(),
+            symbol: brokerSymbol,
             order_type: orderType,
             volume: lotSize,
             entry_price: entryPrice,
@@ -284,9 +288,9 @@ export const Mt5AccountsScreen: React.FC = () => {
             )}
             <form onSubmit={submitOrders} className="grid grid-cols-2 gap-3">
               <label className="col-span-2 grid gap-1.5 text-xs font-semibold text-slate-700">Broker symbol
-                <input required maxLength={64} list="deriv-mt5-symbols" value={symbol} onChange={(event) => setSymbol(event.target.value)} className="h-11 rounded-md border border-slate-300 bg-white px-3 font-mono text-sm" placeholder="Type to search Deriv MT5 symbols…" />
+                <input required maxLength={64} list="deriv-mt5-symbols" value={symbol} onChange={(event) => setSymbol(event.target.value)} className="h-11 rounded-md border border-slate-300 bg-white px-3 font-mono text-sm" placeholder="Enter an exact MT5 symbol such as Volatility 10 Index or XAUUSD" />
                 <datalist id="deriv-mt5-symbols">
-                  {['Volatility 10 Index', 'Volatility 25 Index', 'Volatility 50 Index', 'Volatility 75 Index', 'Volatility 100 Index', 'Volatility 10 (1s) Index', 'Volatility 25 (1s) Index', 'Volatility 50 (1s) Index', 'Volatility 75 (1s) Index', 'Volatility 100 (1s) Index', 'Boom 500 Index', 'Boom 1000 Index', 'Crash 500 Index', 'Crash 1000 Index', 'Jump 10 Index', 'Jump 25 Index', 'Jump 50 Index', 'Jump 75 Index', 'Jump 100 Index', 'Step Index', 'XAUUSD', 'EURUSD', 'GBPUSD', 'USDJPY', 'BTCUSD', 'ETHUSD'].map((name) => <option key={name} value={name} />)}
+                  {['Volatility 10 Index', 'Volatility 25 Index', 'Volatility 50 Index', 'Volatility 75 Index', 'Volatility 100 Index', 'Volatility 10 (1s) Index', 'Volatility 25 (1s) Index', 'Volatility 50 (1s) Index', 'Volatility 75 (1s) Index', 'Volatility 100 (1s) Index', 'Boom 500 Index', 'Boom 1000 Index', 'Crash 500 Index', 'Crash 1000 Index', 'Step Index 10', 'Step Index 25', 'Step Index 50', 'Step Index 75', 'Step Index 100', 'XAUUSD', 'EURUSD', 'GBPUSD', 'USDJPY', 'BTCUSD', 'ETHUSD'].map((name) => <option key={name} value={name} />)}
                 </datalist>
               </label>
               <label className="col-span-2 grid gap-1.5 text-xs font-semibold text-slate-700">Order type

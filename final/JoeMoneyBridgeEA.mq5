@@ -6,7 +6,7 @@ input string BridgeUrl = "http://127.0.0.1:8765";
 input string EaToken = "SET_A_DISTINCT_EA_TOKEN";
 input int PollSeconds = 1;
 input int SlippagePoints = 20;
-input string ReportSymbols = "R_10,R_25,R_50,R_75,R_100,1HZ10V,1HZ25V,1HZ50V,1HZ75V,1HZ100V,BOOM500,BOOM1000,CRASH500,CRASH1000,JD10,JD25,JD50,JD75,JD100,XAUUSD,EURUSD,GBPUSD,USDJPY,AUDUSD,USDCAD,USDCHF,NZDUSD,BTCUSD,ETHUSD";
+input string ReportSymbols = "Volatility 10 Index,Volatility 25 Index,Volatility 50 Index,Volatility 75 Index,Volatility 100 Index,Volatility 10 (1s) Index,Volatility 25 (1s) Index,Volatility 50 (1s) Index,Volatility 75 (1s) Index,Volatility 100 (1s) Index,Boom 500 Index,Boom 1000 Index,Crash 500 Index,Crash 1000 Index,Step Index 10,Step Index 25,Step Index 50,Step Index 75,Step Index 100,XAUUSD,EURUSD,GBPUSD,USDJPY,AUDUSD,USDCAD,USDCHF,NZDUSD,BTCUSD,ETHUSD";
 input int ReportSeconds = 3;
 
 ulong g_last_status_ms = 0;
@@ -243,9 +243,13 @@ void SendStatus()
    string login = IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN));
    bool authorized = TerminalInfoInteger(TERMINAL_CONNECTED) && AccountInfoInteger(ACCOUNT_LOGIN) > 0;
    string message = authorized ? "MT5 login successful" : "MT5 disconnected or login failed";
+   double balance = authorized ? AccountInfoDouble(ACCOUNT_BALANCE) : 0;
+   string currency = authorized ? AccountInfoString(ACCOUNT_CURRENCY) : "";
    string body = "{\"login\":\"" + login + "\",\"connected\":" +
                  (authorized ? "true" : "false") +
-                 ",\"message\":\"" + message + "\"}";
+                 ",\"message\":\"" + message + "\"," +
+                 "\"balance\":" + DoubleToString(balance, 2) +
+                 ",\"currency\":\"" + JsonEscape(currency) + "\"}";
    string response;
    int status;
    HttpRequest("POST", BridgeUrl + "/v1/terminal/status", body, response, status);

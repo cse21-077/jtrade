@@ -50,9 +50,11 @@ export interface Mt5AccountStatus {
   terminal_connected: boolean;
   last_seen: number | null;
   message: string;
+  balance: number;
+  currency: string;
 }
 
-export type Mt5OrderStatus = 'queued' | 'claimed' | 'filled' | 'rejected' | 'cancelled' | 'failed';
+export type Mt5OrderStatus = 'queued' | 'claimed' | 'placed' | 'filled' | 'rejected' | 'cancelled' | 'failed';
 
 export interface Mt5QueuedOrder {
   id: string;

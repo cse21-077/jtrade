@@ -167,6 +167,18 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(self.request("/v1/terminal/status", "POST", "test-ea-token",
                                       {"login": "424242", "connected": True})[0], 403)
 
+    def test_ea_heartbeat_reports_live_balance_and_currency(self):
+        self.provision()
+        status, _ = self.request("/v1/terminal/status", "POST", "test-ea-token",
+                                 {"login": "123456", "connected": True, "message": "MT5 login successful",
+                                  "balance": 5423.75, "currency": "USD"})
+        self.assertEqual(status, 200)
+        status, body = self.request("/v1/status?login=123456", token=BRIDGE_KEY)
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["balance"], 5423.75)
+        self.assertEqual(payload["currency"], "USD")
+
     def test_provision_registers_account_and_hides_password(self):
         self.fake_running.add("123456")
         status, body = self.provision(password="top-secret")

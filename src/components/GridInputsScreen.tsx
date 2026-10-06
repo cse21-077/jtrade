@@ -176,6 +176,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
     const localOrders: PlacedOrder[] = [];
     const bridgeOrders: Mt5OrderRequest[] = [];
     let executionError = '';
+    let latestOrders: PlacedOrder[] = [];
 
     try {
       for (const level of ladderLevels) {
@@ -187,6 +188,11 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
             symbol: selectedSymbol.symbol,
             direction,
             orderType,
+            mt5OrderType: isMarketOrder
+              ? (direction === 'BUY' ? 'MARKET_BUY' : 'MARKET_SELL')
+              : (direction === 'BUY'
+                ? (tradeAction === 'BUY_LIMIT' ? 'BUY_LIMIT' : 'BUY_STOP')
+                : (tradeAction === 'SELL_LIMIT' ? 'SELL_LIMIT' : 'SELL_STOP')),
             price: level.price,
             lotSize: level.lotSize,
             status: 'QUEUED',
@@ -217,6 +223,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
       }));
 
       onDeployOrders(queuedOrders);
+      latestOrders = queuedOrders;
 
       for (let attempt = 0; attempt < 20; attempt++) {
         const updated = await Promise.all(queuedOrders.map((order) =>
@@ -230,6 +237,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
           let nextStatus: PlacedOrder['status'];
           switch (current.status) {
             case 'filled': nextStatus = 'FILLED'; break;
+            case 'placed': nextStatus = order.mt5OrderType?.startsWith('MARKET_') ? 'FILLED' : 'PENDING'; break;
             case 'queued': nextStatus = 'QUEUED'; break;
             case 'claimed': nextStatus = 'CLAIMED'; break;
             case 'rejected': nextStatus = 'FAILED'; break;
@@ -240,8 +248,10 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
             ...order,
             status: nextStatus,
             mt5Ticket: current.ticket ?? order.mt5Ticket,
+            mt5ResultMessage: current.result_message ?? undefined,
           };
         });
+        latestOrders = nextOrders;
         onDeployOrders(nextOrders);
 
         if (updated.every((order) => order && order.status !== 'queued' && order.status !== 'claimed')) break;
@@ -263,12 +273,20 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
       return;
     }
 
+    const acceptedCount = latestOrders.filter((order) => order.status === 'FILLED' || order.status === 'PENDING').length;
+    const rejectedOrders = latestOrders.filter((order) => order.status === 'FAILED');
+    const waitingCount = latestOrders.filter((order) => order.status === 'QUEUED' || order.status === 'CLAIMED').length;
+    const rejectionReason = rejectedOrders.find((order) => order.mt5ResultMessage)?.mt5ResultMessage;
+    const allRejected = rejectedOrders.length === latestOrders.length;
+
     onTradeNotice({
-      success: true,
-      message: `${localOrders.length} order(s) queued on MT5 account ${mt5Account.login} using the live ${selectedSymbol.displayName} price.`,
-      trades: localOrders.map((order) => ({
+      success: !allRejected,
+      errorMessage: rejectedOrders.length > 0 ? rejectionReason ?? `${rejectedOrders.length} order(s) were rejected by MT5.` : undefined,
+      message: `${acceptedCount} accepted by MT5; ${rejectedOrders.length} rejected; ${waitingCount} still waiting for the EA. Submitted order type: ${bridgeOrders[0]?.order_type ?? 'unknown'}.`,
+      trades: latestOrders.map((order) => ({
         symbol: order.symbol,
         direction: order.direction,
+        orderType: order.mt5OrderType,
         price: order.price,
         lotSize: order.lotSize,
         contractId: order.mt5Ticket?.toString(),

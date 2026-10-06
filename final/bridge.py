@@ -80,9 +80,16 @@ def connect_db(path: Path | None = None) -> sqlite3.Connection:
             login TEXT PRIMARY KEY,
             connected INTEGER NOT NULL,
             last_seen REAL NOT NULL,
-            message TEXT NOT NULL DEFAULT ''
+            message TEXT NOT NULL DEFAULT '',
+            balance REAL NOT NULL DEFAULT 0,
+            currency TEXT NOT NULL DEFAULT ''
         )"""
     )
+    status_columns = {row[1] for row in connection.execute("PRAGMA table_info(terminal_status)")}
+    if "balance" not in status_columns:
+        connection.execute("ALTER TABLE terminal_status ADD COLUMN balance REAL NOT NULL DEFAULT 0")
+    if "currency" not in status_columns:
+        connection.execute("ALTER TABLE terminal_status ADD COLUMN currency TEXT NOT NULL DEFAULT ''")
     connection.execute(
         """CREATE TABLE IF NOT EXISTS prices (
             login TEXT NOT NULL,
@@ -289,13 +296,15 @@ class BridgeHandler(BaseHTTPRequestHandler):
             with db_session() as db:
                 if login:
                     row = db.execute(
-                        "SELECT connected,last_seen,message FROM terminal_status WHERE login=?", (login,)
+                        "SELECT connected,last_seen,message,balance,currency FROM terminal_status WHERE login=?", (login,)
                     ).fetchone()
                     return self._send(200, {
                         "login": login,
                         "terminal_connected": bool(row and row["connected"] and now - row["last_seen"] < HEARTBEAT_STALE_SEC),
                         "last_seen": row["last_seen"] if row else None,
                         "message": row["message"] if row else "Waiting for the JoeMoney EA heartbeat.",
+                        "balance": float(row["balance"]) if row else 0.0,
+                        "currency": row["currency"] if row else "",
                     })
                 count = db.execute("SELECT COUNT(*) AS c FROM accounts WHERE is_active=1").fetchone()["c"]
             return self._send(200, {"status": "ok", "service": "JoeMoney MT5 bridge", "active_accounts": count})
@@ -566,6 +575,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 login = str(status.get("login", ""))
                 connected = bool(status.get("connected"))
                 message = str(status.get("message", ""))[:200]
+                try:
+                    balance = float(status.get("balance", 0))
+                except (TypeError, ValueError):
+                    return self._send(400, {"error": "balance must be a number."})
+                currency = str(status.get("currency", ""))[:16]
             except (json.JSONDecodeError, ValueError, AttributeError) as error:
                 return self._send(400, {"error": str(error)})
             with db_session() as db:
@@ -573,9 +587,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 if not known:
                     return self._send(403, {"error": "Heartbeat login is not a registered JoeMoney account."})
                 db.execute(
-                    "INSERT INTO terminal_status(login,connected,last_seen,message) VALUES(?,?,?,?) "
-                    "ON CONFLICT(login) DO UPDATE SET connected=excluded.connected,last_seen=excluded.last_seen,message=excluded.message",
-                    (login, int(connected), time.time(), message),
+                    "INSERT INTO terminal_status(login,connected,last_seen,message,balance,currency) VALUES(?,?,?,?,?,?) "
+                    "ON CONFLICT(login) DO UPDATE SET connected=excluded.connected,last_seen=excluded.last_seen,"
+                    "message=excluded.message,balance=excluded.balance,currency=excluded.currency",
+                    (login, int(connected), time.time(), message, balance, currency),
                 )
             return self._send(200, {"status": "recorded"})
         return self._send(404, {"error": "Not found"})

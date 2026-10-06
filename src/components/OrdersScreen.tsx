@@ -308,7 +308,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
                         order.direction === 'SELL' ? 'text-rose-600' : 'text-emerald-600'
                       }`}
                     >
-                      {order.direction}
+                      {order.mt5OrderType?.replaceAll('_', ' ') ?? order.direction}
                     </span>
                     <span className="text-slate-300 font-normal">|</span>
                     <span className="font-mono text-base font-black text-slate-900">
@@ -338,10 +338,18 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
                       <span className="text-slate-700 font-bold">
                         Deriv #{order.derivContractId}
                       </span>
+                    ) : order.mt5ResultMessage ? (
+                      <span className={order.status === 'FAILED' ? 'text-rose-700 font-medium' : 'text-emerald-700 font-medium'}>
+                        {order.mt5ResultMessage}
+                      </span>
+                    ) : order.status === 'QUEUED' ? (
+                      <span className="text-amber-700 font-medium">Queued on bridge; waiting for the MT5 EA to poll.</span>
+                    ) : order.status === 'CLAIMED' || order.status === 'TRIGGERED' ? (
+                      <span className="text-sky-700 font-medium">MT5 EA received this order and is processing it.</span>
+                    ) : order.status === 'PENDING' && order.mt5OrderId ? (
+                      <span className="text-emerald-700 font-medium">Accepted by MT5; waiting for the broker price trigger.</span>
                     ) : order.status === 'FAILED' ? (
-                      <span className="text-rose-700 font-medium">Deriv rejected this trade</span>
-                    ) : order.status === 'TRIGGERED' ? (
-                      <span className="text-sky-700 font-medium">Submitting to Deriv...</span>
+                      <span className="text-rose-700 font-medium">MT5 rejected this trade.</span>
                     ) : (
                       <span className="text-amber-600 font-medium">
                         Waiting for trigger at {order.price.toFixed(2)}

@@ -7,6 +7,8 @@ type ConnectionState = 'pending' | 'connected' | 'error';
 export const Mt5StatusCard: React.FC<{ account: StoredMt5Account }> = ({ account }) => {
   const [state, setState] = useState<ConnectionState>('pending');
   const [message, setMessage] = useState('Terminal is starting on the VPS…');
+  const [balance, setBalance] = useState<number | null>(null);
+  const [currency, setCurrency] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -16,14 +18,20 @@ export const Mt5StatusCard: React.FC<{ account: StoredMt5Account }> = ({ account
         if (cancelled) return;
         if (status.terminal_connected) {
           setState('connected');
+          setBalance(status.balance);
+          setCurrency(status.currency);
           setMessage('Logged in on the VPS. MT5 trading is live.');
         } else {
           setState('pending');
+          setBalance(null);
+          setCurrency('');
           setMessage(status.message || 'Waiting for the MT5 login on the VPS…');
         }
       } catch (checkError) {
         if (cancelled) return;
         setState('error');
+        setBalance(null);
+        setCurrency('');
         setMessage(checkError instanceof Error ? checkError.message : 'Could not reach the VPS bridge.');
       }
     };
@@ -62,6 +70,11 @@ export const Mt5StatusCard: React.FC<{ account: StoredMt5Account }> = ({ account
         </p>
       </div>
       <p className="mt-1.5 text-[11px] leading-relaxed">{message}</p>
+      {balance !== null && currency && (
+        <p className="mt-2 text-center text-xs font-black text-emerald-200">
+          MT5 balance: {balance.toLocaleString('en-US', { maximumFractionDigits: 2 })} {currency}
+        </p>
+      )}
       {state === 'connected' ? (
         <a
           href="/mt5"

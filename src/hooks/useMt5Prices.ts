@@ -12,9 +12,32 @@ export const MT5_MAX_AGE_SEC = 60;
 
 const POLL_INTERVAL_MS = 4000;
 
-// Maps Deriv-style symbol codes (frxXAUUSD, cryBTCUSD) to the MT5 broker names.
+const SYNTHETIC_MT5_SYMBOLS: Record<string, string> = {
+  R_10: 'Volatility 10 Index',
+  R_25: 'Volatility 25 Index',
+  R_50: 'Volatility 50 Index',
+  R_75: 'Volatility 75 Index',
+  R_100: 'Volatility 100 Index',
+  '1HZ10V': 'Volatility 10 (1s) Index',
+  '1HZ25V': 'Volatility 25 (1s) Index',
+  '1HZ50V': 'Volatility 50 (1s) Index',
+  '1HZ75V': 'Volatility 75 (1s) Index',
+  '1HZ100V': 'Volatility 100 (1s) Index',
+  BOOM500: 'Boom 500 Index',
+  BOOM1000: 'Boom 1000 Index',
+  CRASH500: 'Crash 500 Index',
+  CRASH1000: 'Crash 1000 Index',
+  JD10: 'Step Index 10',
+  JD25: 'Step Index 25',
+  JD50: 'Step Index 50',
+  JD75: 'Step Index 75',
+  JD100: 'Step Index 100',
+};
+
+// Maps legacy app codes and Deriv-style symbols to exact MT5 broker names.
 export const toMt5Symbol = (symbol: string): string => {
   const code = symbol.trim().toUpperCase();
+  if (SYNTHETIC_MT5_SYMBOLS[code]) return SYNTHETIC_MT5_SYMBOLS[code].toUpperCase();
   if (code.startsWith('FRX') || code.startsWith('CRY')) return code.slice(3);
   return code;
 };

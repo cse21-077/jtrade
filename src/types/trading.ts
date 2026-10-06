@@ -51,6 +51,7 @@ export interface PlacedOrder {
   symbol: string;
   direction: OrderDirection;
   orderType: OrderType;
+  mt5OrderType?: string;
   price: number;
   lotSize: number;
   status: 'QUEUED' | 'CLAIMED' | 'PENDING' | 'TRIGGERED' | 'FILLED' | 'CANCELLED' | 'FAILED';
@@ -62,6 +63,7 @@ export interface PlacedOrder {
   derivContractId?: string | number;
   mt5Ticket?: string | number;
   mt5OrderId?: string;
+  mt5ResultMessage?: string;
 }
 
 export interface TradeNotice {
@@ -71,6 +73,7 @@ export interface TradeNotice {
   trades: Array<{
     symbol: string;
     direction: OrderDirection;
+    orderType?: string;
     price: number;
     lotSize: number;
     contractId?: string;
