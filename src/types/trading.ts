@@ -53,13 +53,15 @@ export interface PlacedOrder {
   orderType: OrderType;
   price: number;
   lotSize: number;
-  status: 'PENDING' | 'TRIGGERED' | 'FILLED' | 'CANCELLED' | 'FAILED';
+  status: 'QUEUED' | 'CLAIMED' | 'PENDING' | 'TRIGGERED' | 'FILLED' | 'CANCELLED' | 'FAILED';
   tpPrice?: number;
   slPrice?: number;
   pnl?: number;
   createdAt: number;
   filledAt?: number;
   derivContractId?: string | number;
+  mt5Ticket?: string | number;
+  mt5OrderId?: string;
 }
 
 export interface TradeNotice {

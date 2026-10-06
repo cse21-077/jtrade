@@ -52,9 +52,11 @@ export interface Mt5AccountStatus {
   message: string;
 }
 
+export type Mt5OrderStatus = 'queued' | 'claimed' | 'filled' | 'rejected' | 'cancelled' | 'failed';
+
 export interface Mt5QueuedOrder {
   id: string;
-  status: string;
+  status: Mt5OrderStatus;
   ticket?: string | null;
   result_message?: string | null;
 }

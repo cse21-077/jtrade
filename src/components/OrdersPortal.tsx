@@ -7,8 +7,8 @@ import {
   OrderDirection,
   MarketSymbol,
 } from '../types/trading';
-import { derivService } from '../services/derivWs';
-import { getMt5Quote, MT5_MAX_AGE_SEC, useMt5Prices } from '../hooks/useMt5Prices';
+import { getMt5MidPrice } from '../services/marketPrice';
+import { getMt5Quote, useMt5Prices } from '../hooks/useMt5Prices';
 import { OrderLadderVisualizer } from './OrderLadderVisualizer';
 import { ActiveOrdersList } from './ActiveOrdersList';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -104,11 +104,10 @@ export const OrdersPortal: React.FC<OrdersPortalProps> = ({ account, onDisconnec
   const [customSpotU, setCustomSpotU] = useState<number>(4170.0);
   const effectiveU = autoUpdateSpot ? liveSpotPrice : customSpotU;
 
-  // Live MT5 quote from the VPS bridge; preferred over Deriv ticks when fresh.
+  // MT5 is the only supported price source. A stale or missing quote is not
+  // replaced with a Deriv price.
   const { prices: mt5Prices } = useMt5Prices();
-  const mt5Quote = getMt5Quote(mt5Prices, selectedSymbol.symbol);
-  const mt5Spot =
-    mt5Quote && mt5Quote.ageSec < MT5_MAX_AGE_SEC ? (mt5Quote.bid + mt5Quote.ask) / 2 : null;
+  const mt5Spot = getMt5MidPrice(mt5Prices, selectedSymbol.symbol);
 
   useEffect(() => {
     if (mt5Spot === null) return;
@@ -164,23 +163,7 @@ export const OrdersPortal: React.FC<OrdersPortalProps> = ({ account, onDisconnec
     ]);
   };
 
-  // Subscribe to live ticks from Deriv WebSocket
-  useEffect(() => {
-    let lastP = liveSpotPrice;
-    const unsubscribe = derivService.subscribeTicks(selectedSymbol.symbol, (symbol, quote) => {
-      if (symbol === selectedSymbol.symbol) {
-        if (quote > lastP) setPriceFlash('up');
-        else if (quote < lastP) setPriceFlash('down');
-        lastP = quote;
-        setLiveSpotPrice(quote);
-        setTimeout(() => setPriceFlash(null), 500);
-      }
-    });
-
-    return () => {
-      unsubscribe();
-    };
-  }, [selectedSymbol]);
+  // MT5 prices are fetched directly from the bridge; there is no Deriv fallback.
 
   // Sync custom spot with symbol defaults on symbol change
   const handleSelectSymbol = (sym: MarketSymbol) => {
@@ -335,6 +318,11 @@ export const OrdersPortal: React.FC<OrdersPortalProps> = ({ account, onDisconnec
 
   // Deploy Grid Orders Action
   const handleDeployGrid = async () => {
+    if (mt5Spot === null) {
+      addLog('MT5 market price is unavailable or stale; deployment was blocked.', 'warning');
+      return;
+    }
+
     const newOrders: PlacedOrder[] = [];
 
     ladderLevels.forEach((level) => {
@@ -362,18 +350,6 @@ export const OrdersPortal: React.FC<OrdersPortalProps> = ({ account, onDisconnec
       `Deployed ${newOrders.length} ${direction} orders for ${selectedSymbol.displayName} across ${ladderLevels.length} levels.`,
       'success'
     );
-
-    // Call Deriv Service order placement
-    try {
-      await derivService.executeOrder({
-        symbol: selectedSymbol.symbol,
-        direction,
-        price: basePriceP0,
-        lotSize: lotSizeT,
-      });
-    } catch {
-      // Handled
-    }
 
     setActiveTab('active');
   };

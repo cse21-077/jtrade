@@ -55,11 +55,10 @@ export const Mt5StatusCard: React.FC<{ account: StoredMt5Account }> = ({ account
   return (
     <div className={`rounded-2xl border p-4 ${styles}`}>
       <div className="flex items-center gap-2">
-        {state === 'pending' && <Loader2 className="h-4 w-4 animate-spin" />}
         {state === 'connected' && <ShieldCheck className="h-4 w-4" />}
         {state === 'error' && <ShieldAlert className="h-4 w-4" />}
         <p className="text-xs font-extrabold uppercase tracking-widest">
-          MT5 {account.login} · {state === 'connected' ? 'connected' : state === 'error' ? 'attention needed' : 'connecting'}
+          MT5 {account.login} · {state === 'connected' ? 'connected' : 'attention needed'}
         </p>
       </div>
       <p className="mt-1.5 text-[11px] leading-relaxed">{message}</p>

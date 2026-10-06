@@ -19,12 +19,13 @@ import {
   Plus,
   Loader2,
 } from 'lucide-react';
-import { derivService } from '../services/derivWs';
 import { SymbolSearchSelect } from './SymbolSearchSelect';
-import { MT5_STALE_AFTER_SEC } from '../hooks/useMt5Prices';
+import { getMentorToken, getMt5Order, Mt5OrderRequest, queueMt5Orders, StoredMt5Account } from '../services/joemoneyMt5Api';
+import { MT5_PRICE_STALE_AFTER_SEC } from '../services/marketPrice';
 
 interface GridInputsScreenProps {
   account: DerivAccount;
+  mt5Account: StoredMt5Account | null;
   spotPrice: number;
   mt5PriceAge?: number | null;
   selectedSymbol: MarketSymbol;
@@ -38,6 +39,7 @@ type TradeAction = 'SELL_STOP' | 'SELL_LIMIT' | 'BUY_LIMIT' | 'BUY_STOP' | 'BUY_
 
 export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
   account,
+  mt5Account,
   spotPrice,
   mt5PriceAge = null,
   selectedSymbol,
@@ -132,7 +134,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
   const mt5Badge = mt5PriceAge !== null && (
     <span
       className={`px-1 py-0.5 rounded text-[8px] font-black tracking-widest ${
-        mt5PriceAge >= MT5_STALE_AFTER_SEC
+        mt5PriceAge >= MT5_PRICE_STALE_AFTER_SEC
           ? 'bg-slate-300 text-slate-600'
           : 'bg-sky-500 text-white'
       }`}
@@ -140,6 +142,8 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
       MT5
     </span>
   );
+
+  const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
   // Stepper handlers for lot size to avoid needing keyboard
   const changeLot = (delta: number) => {
@@ -150,86 +154,126 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
   };
 
   const handleDeploy = async () => {
+    if (!mt5Account) {
+      onTradeNotice({
+        success: false,
+        message: 'Select and connect an MT5 account before deploying orders.',
+        trades: [],
+      });
+      return;
+    }
+    if (mt5PriceAge === null || mt5PriceAge >= MT5_PRICE_STALE_AFTER_SEC) {
+      onTradeNotice({
+        success: false,
+        message: 'MT5 price is unavailable or stale. Wait for a fresh quote before deploying the grid.',
+        trades: [],
+      });
+      return;
+    }
+
     setIsDeploying(true);
-    const newOrders: PlacedOrder[] = [];
-    const openedTrades: TradeNotice['trades'] = [];
+    const createdAt = Date.now();
+    const localOrders: PlacedOrder[] = [];
+    const bridgeOrders: Mt5OrderRequest[] = [];
     let executionError = '';
 
     try {
       for (const level of ladderLevels) {
         for (let s = 1; s <= level.ordersCount; s++) {
-          const createdAt = Date.now();
-          const orderId = `ORD-${createdAt.toString(36).toUpperCase()}-${level.levelIndex + 1}-${s}`;
-
-          if (isMarketOrder) {
-            const res = await derivService.executeRealTrade({
-              symbol: selectedSymbol.symbol,
-              direction,
-              lotSize: level.lotSize,
-              orderType: 'MARKET_GRID',
-            });
-
-            if (!res.success || !res.contractId) {
-              executionError = res.message || 'Deriv did not open the trade.';
-              break;
-            }
-
-            openedTrades.push({
-              symbol: selectedSymbol.symbol,
-              direction,
-              price: spotPrice,
-              lotSize: level.lotSize,
-              contractId: res.contractId,
-            });
-            newOrders.push({
-              id: orderId,
-              levelIndex: level.levelIndex + 1,
-              subIndex: s,
-              symbol: selectedSymbol.symbol,
-              direction,
-              orderType: 'MARKET_GRID',
-              price: spotPrice,
-              lotSize: level.lotSize,
-              status: 'FILLED',
-              createdAt,
-              filledAt: Date.now(),
-              derivContractId: res.contractId,
-            });
-          } else {
-            newOrders.push({
-              id: orderId,
-              levelIndex: level.levelIndex + 1,
-              subIndex: s,
-              symbol: selectedSymbol.symbol,
-              direction,
-              orderType,
-              price: level.price,
-              lotSize: level.lotSize,
-              status: 'PENDING',
-              createdAt,
-            });
-          }
+          localOrders.push({
+            id: `ORD-${createdAt.toString(36).toUpperCase()}-${level.levelIndex + 1}-${s}`,
+            levelIndex: level.levelIndex + 1,
+            subIndex: s,
+            symbol: selectedSymbol.symbol,
+            direction,
+            orderType,
+            price: level.price,
+            lotSize: level.lotSize,
+            status: 'QUEUED',
+            createdAt,
+          });
+          bridgeOrders.push({
+            symbol: selectedSymbol.symbol,
+            order_type: isMarketOrder
+              ? (direction === 'BUY' ? 'MARKET_BUY' : 'MARKET_SELL')
+              : (direction === 'BUY'
+                ? (tradeAction === 'BUY_LIMIT' ? 'BUY_LIMIT' : 'BUY_STOP')
+                : (tradeAction === 'SELL_LIMIT' ? 'SELL_LIMIT' : 'SELL_STOP')),
+            volume: level.lotSize,
+            entry_price: isMarketOrder ? 0 : level.price,
+            tp_enabled: false,
+            tp_distance: 0,
+          });
         }
-        if (executionError) break;
+      }
+
+      const token = getMentorToken();
+      const batch = await queueMt5Orders(token, mt5Account.login, bridgeOrders);
+      const queuedOrders: PlacedOrder[] = batch.orders.map((bridgeOrder, index) => ({
+        ...localOrders[index],
+        mt5OrderId: bridgeOrder.id,
+        status: bridgeOrder.status === 'queued' ? 'QUEUED' : 'CLAIMED',
+        mt5Ticket: bridgeOrder.ticket ?? undefined,
+      }));
+
+      onDeployOrders(queuedOrders);
+
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const updated = await Promise.all(queuedOrders.map((order) =>
+          order.mt5OrderId ? getMt5Order(token, order.mt5OrderId) : Promise.resolve(null)
+        ));
+
+        const nextOrders: PlacedOrder[] = queuedOrders.map((order, index) => {
+          const current = updated[index];
+          if (!current || !order.mt5OrderId) return order;
+
+          let nextStatus: PlacedOrder['status'];
+          switch (current.status) {
+            case 'filled': nextStatus = 'FILLED'; break;
+            case 'queued': nextStatus = 'QUEUED'; break;
+            case 'claimed': nextStatus = 'CLAIMED'; break;
+            case 'rejected': nextStatus = 'FAILED'; break;
+            default: nextStatus = 'PENDING';
+          }
+
+          return {
+            ...order,
+            status: nextStatus,
+            mt5Ticket: current.ticket ?? order.mt5Ticket,
+          };
+        });
+        onDeployOrders(nextOrders);
+
+        if (updated.every((order) => order && order.status !== 'queued' && order.status !== 'claimed')) break;
+        await wait(1000);
       }
     } catch (error: any) {
-      executionError = error?.message || 'Trade execution failed.';
+      executionError = error?.message || 'MT5 order submission failed.';
+    } finally {
+      setIsDeploying(false);
     }
 
-    setIsDeploying(false);
-    if (newOrders.length > 0) onDeployOrders(newOrders);
-    if (isMarketOrder) {
+    if (executionError) {
       onTradeNotice({
-        success: openedTrades.length > 0,
-        message: executionError
-          ? openedTrades.length > 0
-            ? `${openedTrades.length} trade(s) opened before Deriv rejected the next order.`
-            : 'Deriv did not open a trade.'
-          : `${openedTrades.length} ${direction} market trade(s) opened on ${selectedSymbol.displayName}.`,
-        errorMessage: executionError || undefined,
-        trades: openedTrades,
+        success: false,
+        message: `MT5 grid deployment failed: ${executionError}`,
+        errorMessage: executionError,
+        trades: [],
       });
+      return;
     }
+
+    onTradeNotice({
+      success: true,
+      message: `${localOrders.length} order(s) queued on MT5 account ${mt5Account.login} using the live ${selectedSymbol.displayName} price.`,
+      trades: localOrders.map((order) => ({
+        symbol: order.symbol,
+        direction: order.direction,
+        price: order.price,
+        lotSize: order.lotSize,
+        contractId: order.mt5Ticket?.toString(),
+      })),
+    });
   };
 
   return (
@@ -247,14 +291,14 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
         <div className="px-3 py-1.5 rounded-full bg-[#f4f5f7] text-slate-800 text-xs font-mono font-bold flex items-center gap-1.5 shrink-0">
           <span
             className={`w-2 h-2 rounded-full animate-pulse ${
-              mt5PriceAge !== null && mt5PriceAge >= MT5_STALE_AFTER_SEC
+              mt5PriceAge !== null && mt5PriceAge >= MT5_PRICE_STALE_AFTER_SEC
                 ? 'bg-slate-400'
                 : 'bg-emerald-500'
             }`}
           />
           <span
             className={
-              mt5PriceAge !== null && mt5PriceAge >= MT5_STALE_AFTER_SEC ? 'text-slate-400' : ''
+              mt5PriceAge !== null && mt5PriceAge >= MT5_PRICE_STALE_AFTER_SEC ? 'text-slate-400' : ''
             }
           >
             Spot: {spotPrice.toFixed(selectedSymbol.decimals)}

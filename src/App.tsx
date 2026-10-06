@@ -10,7 +10,8 @@ import { OfflineIndicator } from './components/OfflineIndicator';
 import { Mt5AccountsScreen } from './components/Mt5AccountsScreen';
 import { derivService } from './services/derivWs';
 import { getStoredMt5Account, StoredMt5Account } from './services/joemoneyMt5Api';
-import { getMt5Quote, MT5_MAX_AGE_SEC, useMt5Prices } from './hooks/useMt5Prices';
+import { getMt5MidPrice } from './services/marketPrice';
+import { useMt5Prices, toMt5Symbol } from './hooks/useMt5Prices';
 import { DerivAccount, MarketSymbol, PlacedOrder, TradeNotice } from './types/trading';
 import { CheckCircle2, CircleAlert, X } from 'lucide-react';
 
@@ -51,19 +52,21 @@ export default function App() {
   const [account, setAccount] = useState<DerivAccount>(derivService.getAccount());
   const [mt5Account, setMt5Account] = useState<StoredMt5Account | null>(() => getStoredMt5Account());
   const [selectedSymbol, setSelectedSymbol] = useState<MarketSymbol>(SYMBOLS[0]);
-  const [spotPrice, setSpotPrice] = useState<number>(1420.5);
+  const [spotPrice, setSpotPrice] = useState<number>(0);
   const [orders, setOrders] = useState<PlacedOrder[]>([]);
   const [tradeNotice, setTradeNotice] = useState<TradeNotice | null>(null);
-  const executingOrderIds = useRef(new Set<string>());
   const isMt5Route = window.location.pathname === '/mt5' || window.location.pathname === '/mt5-demo';
 
-  // Prefer the MT5 quote from the VPS bridge when a fresh tick exists for the
-  // selected symbol; fall back to the Deriv WebSocket price otherwise.
+  // MT5 is the only supported market price source. A stale or missing quote is
+  // not substituted with any external fallback.
   const { prices: mt5Prices } = useMt5Prices();
-  const mt5Quote = getMt5Quote(mt5Prices, selectedSymbol.symbol);
-  const mt5PriceAge = mt5Quote && mt5Quote.ageSec < MT5_MAX_AGE_SEC ? mt5Quote.ageSec : null;
-  const effectiveSpotPrice =
-    mt5Quote && mt5PriceAge !== null ? (mt5Quote.bid + mt5Quote.ask) / 2 : spotPrice;
+  const mt5Price = getMt5MidPrice(mt5Prices, selectedSymbol.symbol);
+  const mt5PriceAge = mt5Prices[toMt5Symbol(selectedSymbol.symbol)]?.ageSec ?? null;
+  const effectiveSpotPrice = mt5Price ?? spotPrice;
+
+  useEffect(() => {
+    if (mt5Price !== null) setSpotPrice(mt5Price);
+  }, [mt5Price]);
 
   // Listen to Deriv account status
   useEffect(() => {
@@ -72,102 +75,6 @@ export default function App() {
     });
     return unsub;
   }, []);
-
-  // Subscribe to live ticks
-  useEffect(() => {
-    const unsub = derivService.subscribeTicks(selectedSymbol.symbol, (sym, quote) => {
-      if (sym === selectedSymbol.symbol) {
-        setSpotPrice(quote);
-      }
-    });
-    return unsub;
-  }, [selectedSymbol]);
-
-  // Execute client-selected limit/stop triggers only after the live quote reaches their level.
-  useEffect(() => {
-    if (orders.length === 0) return;
-
-    const triggeringOrders = orders.filter((order) => {
-      if (
-        order.status !== 'PENDING' ||
-        order.orderType === 'MARKET_GRID' ||
-        executingOrderIds.current.has(order.id)
-      ) return false;
-      if (order.direction === 'BUY') {
-        return order.orderType === 'LIMIT' ? spotPrice <= order.price : spotPrice >= order.price;
-      }
-      return order.orderType === 'LIMIT' ? spotPrice >= order.price : spotPrice <= order.price;
-    });
-    if (triggeringOrders.length === 0) return;
-
-    triggeringOrders.forEach((order) => executingOrderIds.current.add(order.id));
-    const triggeringIds = new Set(triggeringOrders.map((order) => order.id));
-    setOrders((previous) => previous.map((order) =>
-      triggeringIds.has(order.id) && order.status === 'PENDING'
-        ? { ...order, status: 'TRIGGERED' }
-        : order
-    ));
-
-    void Promise.all(triggeringOrders.map(async (order) => {
-      try {
-        const result = await derivService.executeRealTrade({
-          symbol: order.symbol,
-          direction: order.direction,
-          price: order.price,
-          lotSize: order.lotSize,
-          orderType: order.orderType,
-        });
-        return { order, result };
-      } catch (error) {
-        return {
-          order,
-          result: {
-            success: false,
-            contractId: '',
-            message: error instanceof Error ? error.message : 'Deriv trade execution failed.',
-          },
-        };
-      }
-    })).then((results) => {
-      triggeringOrders.forEach((order) => executingOrderIds.current.delete(order.id));
-      const openedResults = results.filter(({ result }) => result.success && result.contractId);
-      const failedResults = results.filter(({ result }) => !result.success || !result.contractId);
-      const openedTrades: TradeNotice['trades'] = openedResults.map(({ order, result }) => ({
-        symbol: order.symbol,
-        direction: order.direction,
-        price: spotPrice,
-        lotSize: order.lotSize,
-        contractId: result.contractId,
-      }));
-      const completedAt = Date.now();
-
-      setOrders((previous) => previous.map((order) => {
-        const outcome = results.find(({ order: triggered }) => triggered.id === order.id);
-        if (!outcome) return order;
-        if (outcome.result.success && outcome.result.contractId) {
-          return {
-            ...order,
-            status: 'FILLED',
-            filledAt: completedAt,
-            derivContractId: outcome.result.contractId,
-          };
-        }
-        return { ...order, status: 'FAILED' };
-      }));
-
-      const errorMessage = failedResults
-        .map(({ result }) => result.message || 'Deriv did not open the trade.')
-        .join(' ');
-      setTradeNotice({
-        success: openedTrades.length > 0,
-        message: failedResults.length > 0
-          ? `${openedTrades.length} trade(s) opened; ${failedResults.length} failed.`
-          : `${openedTrades.length} price-triggered trade(s) opened on Deriv.`,
-        errorMessage: errorMessage || undefined,
-        trades: openedTrades,
-      });
-    });
-  }, [orders, spotPrice]);
 
   const handleSplashConnected = (acc: DerivAccount) => {
     setAccount(acc);
@@ -230,6 +137,7 @@ export default function App() {
             {activeTab === 'grid' && (
               <GridInputsScreen
                 account={account}
+                mt5Account={mt5Account}
                 spotPrice={effectiveSpotPrice}
                 mt5PriceAge={mt5PriceAge}
                 selectedSymbol={selectedSymbol}
