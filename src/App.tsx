@@ -46,8 +46,11 @@ export default function App() {
   const isMt5Route = window.location.pathname === '/mt5' || window.location.pathname === '/mt5-demo';
 
   // MT5 is the only supported market price source. A stale or missing quote is
-  // not substituted with any external fallback.
-  const { prices: mt5Prices } = useMt5Prices(mt5Account?.login);
+  // not substituted with any external fallback. Prices are fetched across every
+  // connected account (no login filter) so e.g. a synthetic account feeds the
+  // Volatility indices while a financial account feeds gold/forex at the same
+  // time; the hook keeps the freshest quote per symbol name.
+  const { prices: mt5Prices } = useMt5Prices();
   const mt5Quote = getMt5Quote(mt5Prices, selectedSymbol.symbol);
   const mt5Price = mt5Quote && mt5Quote.ageSec < 60
     ? (mt5Quote.bid + mt5Quote.ask) / 2
