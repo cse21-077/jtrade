@@ -1,9 +1,9 @@
 // JoeMoney local MT5 bridge EA. Intended for a single demo account during testing.
 #property strict
-#property version "1.01"
+#property version "1.02"
 
 input string BridgeUrl = "http://127.0.0.1:8765";
-input string EaToken = "SET_A_DISTINCT_EA_TOKEN";
+input string EaToken = "dab2da53cd7c4cd9ad0116a9a85f1dab814360e3e04a42c1a45b6f6b6a34b8c2";
 input int PollSeconds = 1;
 input int SlippagePoints = 20;
 input string ReportSymbols = "Volatility 10 Index,Volatility 25 Index,Volatility 50 Index,Volatility 75 Index,Volatility 100 Index,Volatility 10 (1s) Index,Volatility 25 (1s) Index,Volatility 50 (1s) Index,Volatility 75 (1s) Index,Volatility 100 (1s) Index,Boom 500 Index,Boom 1000 Index,Crash 500 Index,Crash 1000 Index,Step Index 10,Step Index 25,Step Index 50,Step Index 75,Step Index 100,XAUUSD,EURUSD,GBPUSD,USDJPY,AUDUSD,USDCAD,USDCHF,NZDUSD,BTCUSD,ETHUSD";
@@ -20,7 +20,7 @@ int OnInit()
    if(PollSeconds < 1 || ReportSeconds < 1 || StringLen(EaToken) < 32)
       return INIT_PARAMETERS_INCORRECT;
    EventSetTimer(PollSeconds);
-   Print("JoeMoney EA build 1.01 ready. MT5 login: ", (long)AccountInfoInteger(ACCOUNT_LOGIN));
+   Print("JoeMoney EA build 1.02 ready. MT5 login: ", (long)AccountInfoInteger(ACCOUNT_LOGIN));
    Print("Allow WebRequest for ", BridgeUrl, " in MT5 Options > Expert Advisors.");
    return INIT_SUCCEEDED;
 }
@@ -138,7 +138,9 @@ bool ExecuteOrder(const string symbol, const string order_type, const double req
    double volume_step = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
    if(requested_volume < min_volume || requested_volume > max_volume || volume_step <= 0)
    {
-      message = "Volume is outside broker limits.";
+      message = "Volume " + DoubleToString(requested_volume, 4) + " is outside broker limits for " + symbol +
+             " (min " + DoubleToString(min_volume, 4) + ", max " + DoubleToString(max_volume, 4) +
+             ", step " + DoubleToString(volume_step, 4) + ").";
       return false;
    }
    double volume = MathFloor(requested_volume / volume_step + 1e-8) * volume_step;
@@ -295,10 +297,16 @@ void ReportPrices()
          skipped += name + " (no tick)";
          continue;
       }
+      double volume_min = SymbolInfoDouble(name, SYMBOL_VOLUME_MIN);
+      double volume_max = SymbolInfoDouble(name, SYMBOL_VOLUME_MAX);
+      double volume_step = SymbolInfoDouble(name, SYMBOL_VOLUME_STEP);
       if(reported > 0)
          ticks += ",";
       ticks += "{\"symbol\":\"" + JsonEscape(name) + "\",\"bid\":" + DoubleToString(tick.bid, 8) +
-               ",\"ask\":" + DoubleToString(tick.ask, 8) + "}";
+               ",\"ask\":" + DoubleToString(tick.ask, 8) +
+               ",\"volume_min\":" + DoubleToString(volume_min, 4) +
+               ",\"volume_max\":" + DoubleToString(volume_max, 4) +
+               ",\"volume_step\":" + DoubleToString(volume_step, 4) + "}";
       reported++;
    }
    if(StringLen(skipped) > 0 && GetTickCount64() - g_last_symbol_warn_ms >= 60000)

@@ -37,7 +37,7 @@ MAX_TICK_BATCH_SIZE = 200
 ORDER_TYPES = {
     "MARKET_BUY", "MARKET_SELL", "BUY_LIMIT", "SELL_LIMIT", "BUY_STOP", "SELL_STOP"
 }
-SYMBOL_RE = re.compile(r"^[A-Za-z0-9._ -]{1,64}$")
+SYMBOL_RE = re.compile(r"^[A-Za-z0-9._ ()-]{1,64}$")
 LOGIN_RE = re.compile(r"^\d{4,20}$")
 HEARTBEAT_STALE_SEC = 30
 
@@ -96,10 +96,19 @@ def connect_db(path: Path | None = None) -> sqlite3.Connection:
             symbol TEXT NOT NULL,
             bid REAL NOT NULL,
             ask REAL NOT NULL,
+            volume_min REAL NOT NULL DEFAULT 0.01,
+            volume_max REAL NOT NULL DEFAULT 100,
+            volume_step REAL NOT NULL DEFAULT 0.01,
+            volume_limits_known INTEGER NOT NULL DEFAULT 0,
             updated_at REAL NOT NULL,
             PRIMARY KEY(login, symbol)
         )"""
     )
+    price_columns = {row[1] for row in connection.execute("PRAGMA table_info(prices)")}
+    for name, default in (("volume_min", "0.01"), ("volume_max", "100"), ("volume_step", "0.01"),
+                          ("volume_limits_known", "0")):
+        if name not in price_columns:
+            connection.execute(f"ALTER TABLE prices ADD COLUMN {name} REAL NOT NULL DEFAULT {default}")
     connection.execute(
         """CREATE TABLE IF NOT EXISTS accounts (
             login TEXT PRIMARY KEY,
@@ -162,7 +171,7 @@ def validate_order(item: object) -> dict:
     symbol = item.get("symbol")
     order_type = item.get("order_type")
     if not isinstance(symbol, str) or not SYMBOL_RE.fullmatch(symbol) or "|" in symbol:
-        raise ValueError("Symbol must contain 1-64 letters, digits, spaces, dots, underscores, or hyphens.")
+        raise ValueError("Symbol must contain 1-64 letters, digits, spaces, dots, underscores, parentheses, or hyphens.")
     if order_type not in ORDER_TYPES:
         raise ValueError("Unsupported order_type.")
     try:
@@ -210,15 +219,23 @@ def validate_ticks(payload: object) -> tuple[str, list[dict]]:
             raise ValueError("Each tick must be an object.")
         symbol = tick.get("symbol")
         if not isinstance(symbol, str) or not SYMBOL_RE.fullmatch(symbol) or "|" in symbol:
-            raise ValueError("Symbol must contain 1-64 letters, digits, spaces, dots, underscores, or hyphens.")
+            raise ValueError("Symbol must contain 1-64 letters, digits, spaces, dots, underscores, parentheses, or hyphens.")
+        has_volume_limits = all(name in tick for name in ("volume_min", "volume_max", "volume_step"))
         try:
             bid = float(tick.get("bid"))
             ask = float(tick.get("ask"))
+            volume_min = float(tick.get("volume_min", 0.01))
+            volume_max = float(tick.get("volume_max", 100))
+            volume_step = float(tick.get("volume_step", 0.01))
         except (TypeError, ValueError):
-            raise ValueError("bid and ask must be numbers.") from None
-        if not all(math.isfinite(value) for value in (bid, ask)) or bid <= 0 or ask <= 0:
-            raise ValueError("bid and ask must be finite numbers greater than zero.")
-        validated.append({"symbol": symbol, "bid": bid, "ask": ask})
+            raise ValueError("bid, ask, and volume limits must be numbers.") from None
+        if not all(math.isfinite(value) for value in (bid, ask, volume_min, volume_max, volume_step)):
+            raise ValueError("bid, ask, and volume limits must be finite numbers.")
+        if bid <= 0 or ask <= 0 or volume_min <= 0 or volume_max < volume_min or volume_step <= 0:
+            raise ValueError("bid/ask and volume limits must be positive and consistent.")
+        validated.append({"symbol": symbol, "bid": bid, "ask": ask,
+                          "volume_min": volume_min, "volume_max": volume_max, "volume_step": volume_step,
+                          "volume_limits_known": has_volume_limits})
     return login, validated
 
 
@@ -360,7 +377,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             now = time.time()
             with db_session() as db:
                 rows = db.execute(
-                    "SELECT login,symbol,bid,ask,updated_at FROM prices WHERE " + " AND ".join(clauses),
+                    "SELECT login,symbol,bid,ask,volume_min,volume_max,volume_step,volume_limits_known,updated_at FROM prices WHERE " + " AND ".join(clauses),
                     arguments,
                 ).fetchall()
             prices = [
@@ -369,6 +386,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     "symbol": row["symbol"],
                     "bid": row["bid"],
                     "ask": row["ask"],
+                    "volume_min": row["volume_min"],
+                    "volume_max": row["volume_max"],
+                    "volume_step": row["volume_step"],
+                    "volume_limits_known": bool(row["volume_limits_known"]),
                     "age_sec": round(now - row["updated_at"], 1),
                 }
                 for row in rows
@@ -564,10 +585,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     return self._send(403, {"error": "Price login is not a registered JoeMoney account."})
                 now = time.time()
                 db.executemany(
-                    "INSERT INTO prices(login,symbol,bid,ask,updated_at) VALUES(?,?,?,?,?) "
+                                        "INSERT INTO prices(login,symbol,bid,ask,volume_min,volume_max,volume_step,volume_limits_known,updated_at) VALUES(?,?,?,?,?,?,?,?,?) "
                     "ON CONFLICT(login,symbol) DO UPDATE SET "
-                    "bid=excluded.bid,ask=excluded.ask,updated_at=excluded.updated_at",
-                    [(login, tick["symbol"], tick["bid"], tick["ask"], now) for tick in ticks],
+                                        "bid=excluded.bid,ask=excluded.ask,volume_min=excluded.volume_min,"
+                                        "volume_max=excluded.volume_max,volume_step=excluded.volume_step,"
+                                        "volume_limits_known=excluded.volume_limits_known,updated_at=excluded.updated_at",
+                                        [(login, tick["symbol"], tick["bid"], tick["ask"], tick["volume_min"],
+                                            tick["volume_max"], tick["volume_step"], int(tick["volume_limits_known"]), now) for tick in ticks],
                 )
             return self._send(200, {"status": "recorded", "count": len(ticks)})
         if parsed.path == "/v1/terminal/status":

@@ -11,7 +11,7 @@ import { Mt5AccountsScreen } from './components/Mt5AccountsScreen';
 import { derivService } from './services/derivWs';
 import { getStoredMt5Account, StoredMt5Account } from './services/joemoneyMt5Api';
 import { getMt5MidPrice } from './services/marketPrice';
-import { useMt5Prices, toMt5Symbol } from './hooks/useMt5Prices';
+import { getMt5Quote, useMt5Prices } from './hooks/useMt5Prices';
 import { DerivAccount, MarketSymbol, PlacedOrder, TradeNotice } from './types/trading';
 import { CheckCircle2, CircleAlert, X } from 'lucide-react';
 
@@ -34,8 +34,10 @@ export default function App() {
   // MT5 is the only supported market price source. A stale or missing quote is
   // not substituted with any external fallback.
   const { prices: mt5Prices } = useMt5Prices(mt5Account?.login);
-  const mt5Price = getMt5MidPrice(mt5Prices, selectedSymbol.symbol);
-  const mt5Quote = mt5Prices[toMt5Symbol(selectedSymbol.symbol)] ?? null;
+  const mt5Quote = getMt5Quote(mt5Prices, selectedSymbol.symbol);
+  const mt5Price = mt5Quote && mt5Quote.ageSec < 60
+    ? (mt5Quote.bid + mt5Quote.ask) / 2
+    : null;
   const mt5PriceAge = mt5Quote?.ageSec ?? null;
   const effectiveSpotPrice = mt5Price ?? 0;
 
@@ -190,13 +192,15 @@ export default function App() {
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-center gap-2">
-                    {tradeNotice.success
+                    {tradeNotice.outcome === 'accepted'
                       ? <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" />
-                      : <CircleAlert className="h-5 w-5 shrink-0 text-rose-600" />}
+                      : <CircleAlert className={`h-5 w-5 shrink-0 ${tradeNotice.outcome === 'unconfirmed' || tradeNotice.outcome === 'partial' ? 'text-amber-600' : 'text-rose-600'}`} />}
                     <h2 id="trade-result-title" className="text-base font-bold text-slate-900">
-                      {tradeNotice.success
-                        ? tradeNotice.errorMessage ? 'Partial execution' : 'Orders submitted'
-                        : 'Trade not opened'}
+                      {tradeNotice.outcome === 'accepted' ? 'Accepted by MT5'
+                        : tradeNotice.outcome === 'partial' ? 'Partially accepted'
+                          : tradeNotice.outcome === 'unconfirmed' ? 'Trade result unconfirmed'
+                            : tradeNotice.outcome === 'rejected' ? 'Trade rejected'
+                              : tradeNotice.success ? 'Request accepted' : 'Trade not placed'}
                     </h2>
                   </div>
                   <button type="button" onClick={() => setTradeNotice(null)} className="p-1 text-slate-400 hover:text-slate-800" aria-label="Close dialog">
@@ -206,7 +210,7 @@ export default function App() {
                 <p className="mt-3 text-sm text-slate-700">{tradeNotice.message}</p>
                 {(!tradeNotice.success || tradeNotice.errorMessage) && (
                   <p className="mt-2 text-xs text-slate-500">
-                    {tradeNotice.errorMessage || tradeNotice.message} The market may be closed for the weekend or outside this symbol's trading hours.
+                    {tradeNotice.errorMessage || tradeNotice.message}
                   </p>
                 )}
                 {tradeNotice.trades.length > 0 && (
@@ -217,8 +221,11 @@ export default function App() {
                           {trade.orderType ? `${trade.orderType.replace('_', ' ')} ` : `${trade.direction} `}{trade.symbol}
                         </span>
                         <span className="text-right font-mono text-slate-500">
-                          {trade.lotSize} lots{trade.contractId ? ` · #${trade.contractId}` : ''}
+                          {trade.status ?? 'submitted'}{trade.lotSize ? ` · ${trade.lotSize} lots` : ''}{trade.contractId ? ` · #${trade.contractId}` : ''}
                         </span>
+                        {trade.resultMessage && (
+                          <span className="basis-full text-left text-[11px] text-rose-700">{trade.resultMessage}</span>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -230,7 +237,7 @@ export default function App() {
                       onClick={() => { setTradeNotice(null); setActiveTab('orders'); }}
                       className="flex-1 rounded-lg bg-slate-900 px-3 py-2.5 text-xs font-bold text-white hover:bg-slate-700"
                     >
-                      View open trades
+                      View order status
                     </button>
                   )}
                   <button

@@ -122,6 +122,25 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(lookup_status, 200)
         self.assertEqual(json.loads(lookup_body)["ticket"], "98765")
 
+    def test_ea_rejection_reason_is_returned_to_client(self):
+        self.provision()
+        order = {"symbol": "EURUSD", "order_type": "MARKET_BUY", "volume": 0.1,
+                 "entry_price": 0, "tp_enabled": False, "tp_distance": 0}
+        _, created_body = self.request("/v1/orders", "POST", BRIDGE_KEY,
+                                       {"login": "123456", "orders": [order]},
+                                       {"Idempotency-Key": "rejected-order-01"})
+        order_id = json.loads(created_body)["orders"][0]["id"]
+        self.assertEqual(self.request("/v1/commands/next?login=123456", token="test-ea-token")[0], 200)
+        reason = "Volume must be 0.2 lots or a multiple of 0.2."
+        status, _ = self.request(f"/v1/commands/{order_id}/result", "POST", "test-ea-token",
+                                 {"status": "rejected", "ticket": "", "message": reason})
+        self.assertEqual(status, 200)
+        status, body = self.request(f"/v1/orders/{order_id}", token=BRIDGE_KEY)
+        self.assertEqual(status, 200)
+        result = json.loads(body)
+        self.assertEqual(result["status"], "rejected")
+        self.assertEqual(result["result_message"], reason)
+
     def test_orders_are_routed_per_login(self):
         self.provision(login="123456")
         self.provision(login="654321")
@@ -231,8 +250,10 @@ class BridgeTests(unittest.TestCase):
     def test_ea_posts_prices_and_client_reads_them_back(self):
         self.provision()
         ticks = [
-            {"symbol": "R_10", "bid": 123.45, "ask": 123.46},
-            {"symbol": "1HZ100V", "bid": 1420.5, "ask": 1420.51},
+            {"symbol": "R_10", "bid": 123.45, "ask": 123.46,
+             "volume_min": 0.1, "volume_max": 50, "volume_step": 0.1},
+            {"symbol": "1HZ100V", "bid": 1420.5, "ask": 1420.51,
+             "volume_min": 0.2, "volume_max": 10, "volume_step": 0.2},
         ]
         status, body = self.request("/v1/prices", "POST", "test-ea-token",
                                     {"login": "123456", "ticks": ticks})
@@ -247,7 +268,26 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(by_symbol["R_10"]["bid"], 123.45)
         self.assertEqual(by_symbol["R_10"]["ask"], 123.46)
         self.assertEqual(by_symbol["R_10"]["login"], "123456")
+        self.assertEqual(by_symbol["R_10"]["volume_min"], 0.1)
+        self.assertEqual(by_symbol["R_10"]["volume_step"], 0.1)
         self.assertGreaterEqual(by_symbol["R_10"]["age_sec"], 0)
+
+    def test_full_mt5_names_with_parentheses_do_not_reject_other_ticks(self):
+        self.provision()
+        ticks = [
+            {"symbol": "Volatility 10 (1s) Index", "bid": 5060.39, "ask": 5060.41,
+             "volume_min": 0.1, "volume_max": 50, "volume_step": 0.1},
+            {"symbol": "XAUUSD", "bid": 2650.10, "ask": 2650.20,
+             "volume_min": 0.01, "volume_max": 100, "volume_step": 0.01},
+        ]
+        status, body = self.request("/v1/prices", "POST", "test-ea-token",
+                                    {"login": "123456", "ticks": ticks})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(json.loads(body)["count"], 2)
+        status, body = self.request("/v1/prices?login=123456", token=BRIDGE_KEY)
+        self.assertEqual(status, 200)
+        self.assertEqual({price["symbol"] for price in json.loads(body)["prices"]},
+                         {"Volatility 10 (1s) Index", "XAUUSD"})
 
     def test_prices_reject_unknown_login_and_bad_symbols(self):
         self.provision()

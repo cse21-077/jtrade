@@ -69,6 +69,10 @@ export interface Mt5Price {
   bid: number;
   ask: number;
   age_sec: number;
+  volume_min?: number;
+  volume_max?: number;
+  volume_step?: number;
+  volume_limits_known?: boolean;
 }
 
 export interface Mt5PricesResponse {

@@ -22,6 +22,7 @@ import {
 import { SymbolSearchSelect } from './SymbolSearchSelect';
 import { getMentorToken, getMt5Order, Mt5OrderRequest, queueMt5Orders, StoredMt5Account } from '../services/joemoneyMt5Api';
 import { MT5_PRICE_STALE_AFTER_SEC } from '../services/marketPrice';
+import { getTradeOutcome } from '../services/tradeOutcome';
 import { Mt5Quote } from '../hooks/useMt5Prices';
 
 interface GridInputsScreenProps {
@@ -176,6 +177,26 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
       });
       return;
     }
+    if (!mt5Quote?.volumeLimitsKnown) {
+      onTradeNotice({
+        success: false,
+        message: `MT5 has not reported volume limits for ${mt5Quote?.symbol ?? selectedSymbol.symbol}. Update and restart the EA build that reports broker min/max/step before placing trades.`,
+        trades: [],
+      });
+      return;
+    }
+    const volumeMin = mt5Quote?.volumeMin ?? selectedSymbol.minLot;
+    const volumeMax = mt5Quote?.volumeMax ?? 100;
+    const volumeStep = mt5Quote?.volumeStep ?? selectedSymbol.lotStep;
+    if (lotSize < volumeMin || lotSize > volumeMax || volumeStep <= 0 ||
+        Math.abs(lotSize / volumeStep - Math.round(lotSize / volumeStep)) > 1e-8) {
+      onTradeNotice({
+        success: false,
+        message: `Invalid volume for ${mt5Quote?.symbol ?? selectedSymbol.symbol}: choose ${volumeMin} to ${volumeMax} lots in steps of ${volumeStep}.`,
+        trades: [],
+      });
+      return;
+    }
 
     setIsDeploying(true);
     const createdAt = Date.now();
@@ -191,7 +212,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
             id: `ORD-${createdAt.toString(36).toUpperCase()}-${level.levelIndex + 1}-${s}`,
             levelIndex: level.levelIndex + 1,
             subIndex: s,
-            symbol: selectedSymbol.symbol,
+            symbol: mt5Quote?.symbol ?? selectedSymbol.symbol,
             direction,
             orderType,
             mt5OrderType: isMarketOrder
@@ -205,7 +226,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
             createdAt,
           });
           bridgeOrders.push({
-            symbol: selectedSymbol.symbol,
+            symbol: mt5Quote?.symbol ?? selectedSymbol.symbol,
             order_type: isMarketOrder
               ? (direction === 'BUY' ? 'MARKET_BUY' : 'MARKET_SELL')
               : (direction === 'BUY'
@@ -270,8 +291,28 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
     }
 
     if (executionError) {
+      if (latestOrders.length > 0) {
+        onTradeNotice({
+          success: false,
+          outcome: 'unconfirmed',
+          message: `Could not confirm the MT5 result for ${latestOrders.length} queued order(s): ${executionError}. Do not assume these trades were placed; check MT5 Trade/History and the order status before retrying.`,
+          errorMessage: executionError,
+          trades: latestOrders.map((order) => ({
+            symbol: order.symbol,
+            direction: order.direction,
+            orderType: order.mt5OrderType,
+            price: order.price,
+            lotSize: order.lotSize,
+            contractId: order.mt5Ticket?.toString(),
+            status: order.status,
+            resultMessage: order.mt5ResultMessage,
+          })),
+        });
+        return;
+      }
       onTradeNotice({
         success: false,
+        outcome: 'rejected',
         message: `MT5 grid deployment failed: ${executionError}`,
         errorMessage: executionError,
         trades: [],
@@ -283,12 +324,14 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
     const rejectedOrders = latestOrders.filter((order) => order.status === 'FAILED');
     const waitingCount = latestOrders.filter((order) => order.status === 'QUEUED' || order.status === 'CLAIMED').length;
     const rejectionReason = rejectedOrders.find((order) => order.mt5ResultMessage)?.mt5ResultMessage;
-    const allRejected = rejectedOrders.length === latestOrders.length;
+    const outcome = getTradeOutcome(acceptedCount, rejectedOrders.length, waitingCount);
+    const success = outcome === 'accepted';
 
     onTradeNotice({
-      success: !allRejected,
+      success,
+      outcome,
       errorMessage: rejectedOrders.length > 0 ? rejectionReason ?? `${rejectedOrders.length} order(s) were rejected by MT5.` : undefined,
-      message: `${acceptedCount} accepted by MT5; ${rejectedOrders.length} rejected; ${waitingCount} still waiting for the EA. Submitted order type: ${bridgeOrders[0]?.order_type ?? 'unknown'}.`,
+      message: `${acceptedCount} accepted by MT5; ${rejectedOrders.length} rejected; ${waitingCount} not yet confirmed by the EA. Submitted order type: ${bridgeOrders[0]?.order_type ?? 'unknown'}.`,
       trades: latestOrders.map((order) => ({
         symbol: order.symbol,
         direction: order.direction,
@@ -296,6 +339,8 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
         price: order.price,
         lotSize: order.lotSize,
         contractId: order.mt5Ticket?.toString(),
+        status: order.status,
+        resultMessage: order.mt5ResultMessage,
       })),
     });
   };

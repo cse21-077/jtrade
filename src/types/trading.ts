@@ -66,8 +66,11 @@ export interface PlacedOrder {
   mt5ResultMessage?: string;
 }
 
+export type TradeOutcome = 'accepted' | 'rejected' | 'partial' | 'unconfirmed';
+
 export interface TradeNotice {
   success: boolean;
+  outcome?: TradeOutcome;
   message: string;
   errorMessage?: string;
   trades: Array<{
@@ -77,6 +80,8 @@ export interface TradeNotice {
     price: number;
     lotSize: number;
     contractId?: string;
+    status?: PlacedOrder['status'];
+    resultMessage?: string;
   }>;
 }
 
