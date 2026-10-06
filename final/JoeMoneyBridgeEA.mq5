@@ -1,6 +1,6 @@
 // JoeMoney local MT5 bridge EA. Runs one terminal per managed account slot.
 #property strict
-#property version "4.05"
+#property version "4.06"
 
 input string BridgeUrl = "http://127.0.0.1:8765";
 // Fixed at compile time on purpose. Chart profiles (.chr) can only override
