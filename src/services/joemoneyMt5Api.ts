@@ -116,6 +116,10 @@ export const storeMt5Account = (account: StoredMt5Account) => {
   window.localStorage.setItem(ACCOUNT_STORAGE_KEY, JSON.stringify(account));
 };
 
+export const clearStoredMt5Account = () => {
+  window.localStorage.removeItem(ACCOUNT_STORAGE_KEY);
+};
+
 async function request<T>(path: string, token: string, init?: RequestInit): Promise<T> {
   if (!apiBaseUrl) {
     throw new Error('The JoeMoney VPS API URL is not configured in the PWA build (VITE_JOEMONEY_API_URL).');

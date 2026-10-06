@@ -590,7 +590,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
               inputMode="decimal"
               value={lotSize}
               onChange={(e) => setLotSize(Math.max(0.01, parseFloat(e.target.value) || 0.01))}
-              className="flex-1 min-w-0 px-3 py-2.5 rounded-xl bg-[#f4f5f7] border-0 font-mono text-base font-bold text-[#fafafa] text-center focus:ring-2 focus:ring-slate-900"
+              className="flex-1 min-w-0 px-3 py-2.5 rounded-xl bg-[#1f1f23] border border-[#26262b] font-mono text-base font-bold text-white text-center focus:ring-2 focus:ring-[#d6f655]"
             />
 
             <button
@@ -756,7 +756,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
 
       {/* Review Order overlay */}
       {showReview && (
-        <div className="absolute inset-0 z-50 bg-[#0e0e10] flex flex-col" role="dialog" aria-label="Review order">
+        <div className="fixed inset-0 z-50 mx-auto w-full max-w-md bg-[#0e0e10] flex flex-col" role="dialog" aria-label="Review order">
           <div className="flex items-center gap-3 px-4 pt-4 pb-3 border-b border-[#26262b]">
             <button
               type="button"
@@ -769,9 +769,9 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
             <h3 className="text-base font-black text-white tracking-tight">Review Order</h3>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
             {/* Payment Summary */}
-            <div className="rounded-2xl bg-[#18181b] border border-[#26262b] p-4 space-y-3">
+            <div className="rounded-2xl bg-[#18181b] border border-[#26262b] p-3.5 space-y-2">
               <p className="text-[10px] font-bold text-[#52525b] uppercase tracking-widest">Order Summary</p>
               {([
                 ['Product Name', selectedSymbol.displayName],
@@ -790,7 +790,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
             </div>
 
             {/* Locked action row */}
-            <div className="flex items-center gap-3 rounded-2xl bg-[#18181b] border border-[#26262b] p-4">
+            <div className="flex items-center gap-3 rounded-2xl bg-[#18181b] border border-[#26262b] p-3.5">
               <span className="w-9 h-9 rounded-xl bg-[#1f1f23] flex items-center justify-center shrink-0">
                 <Crosshair className="w-4 h-4 text-[#d6f655]" />
               </span>
@@ -808,12 +808,12 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
             </p>
           </div>
 
-          <div className="px-4 pb-6 pt-2 space-y-2 border-t border-[#26262b]">
+          <div className="px-4 pb-5 pt-2 space-y-2 border-t border-[#26262b]">
             <button
               type="button"
               disabled={isDeploying}
               onClick={handleArm}
-              className="w-full py-4 rounded-full bg-[#d6f655] text-[#0e0e10] font-black text-sm flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50 active:scale-98"
+              className="w-full py-3.5 rounded-full bg-[#d6f655] text-[#0e0e10] font-black text-sm flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50 active:scale-98"
             >
               {isDeploying ? (
                 <>
@@ -827,7 +827,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
             <button
               type="button"
               onClick={() => setShowReview(false)}
-              className="w-full py-2 text-xs font-bold text-[#52525b] hover:text-[#a1a1aa] cursor-pointer"
+              className="w-full py-2.5 rounded-full border border-[#d6f655] text-[#d6f655] text-xs font-bold hover:bg-[#d6f655]/10 cursor-pointer transition"
             >
               Back to desk
             </button>
@@ -837,8 +837,8 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
 
       {/* Success overlay */}
       {deployResult && (
-        <div className="absolute inset-0 z-50 bg-[#0e0e10] flex flex-col items-center justify-center px-6 text-center" role="dialog" aria-label="Orders armed">
-          <div className="w-full max-w-sm space-y-5">
+        <div className="fixed inset-0 z-50 mx-auto w-full max-w-md bg-[#0e0e10] flex flex-col items-center justify-center px-6 text-center overflow-y-auto" role="dialog" aria-label="Orders armed">
+          <div className="w-full max-w-sm space-y-5 py-6">
             <div className="flex flex-col items-center gap-3">
               <span className="w-16 h-16 rounded-full bg-[#d6f655] flex items-center justify-center">
                 <CheckCircle2 className="w-8 h-8 text-[#0e0e10]" />
@@ -904,7 +904,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
             <button
               type="button"
               onClick={() => setDeployResult(null)}
-              className="w-full py-2 text-xs font-bold text-[#52525b] hover:text-[#a1a1aa] cursor-pointer"
+              className="w-full py-2.5 rounded-full border border-[#d6f655] text-[#d6f655] text-xs font-bold hover:bg-[#d6f655]/10 cursor-pointer transition"
             >
               Back to desk
             </button>

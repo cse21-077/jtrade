@@ -1,6 +1,6 @@
 // JoeMoney local MT5 bridge EA. Intended for a single demo account during testing.
 #property strict
-#property version "1.02"
+#property version "4.00"
 
 input string BridgeUrl = "http://127.0.0.1:8765";
 input string EaToken = "dab2da53cd7c4cd9ad0116a9a85f1dab814360e3e04a42c1a45b6f6b6a34b8c2";
@@ -22,7 +22,7 @@ int OnInit()
    if(PollSeconds < 1 || ReportSeconds < 1 || StringLen(EaToken) < 32)
       return INIT_PARAMETERS_INCORRECT;
    EventSetTimer(PollSeconds);
-   Print("JoeMoney EA build 1.02 ready. MT5 login: ", (long)AccountInfoInteger(ACCOUNT_LOGIN));
+   Print("JoeMoney EA build 4.00 ready. MT5 login: ", (long)AccountInfoInteger(ACCOUNT_LOGIN));
    Print("Allow WebRequest for ", BridgeUrl, " in MT5 Options > Expert Advisors.");
    return INIT_SUCCEEDED;
 }

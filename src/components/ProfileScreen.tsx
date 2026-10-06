@@ -6,7 +6,7 @@ import { PWAInstallButton } from './PWAInstallButton';
 interface ProfileScreenProps {
   account: DerivAccount;
   onOpenConnect: () => void;
-  onDisconnect: () => void;
+  onDisconnect: () => Promise<void>;
 }
 
 export const ProfileScreen: React.FC<ProfileScreenProps> = ({
@@ -15,7 +15,21 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onDisconnect,
 }) => {
   const [showFAQ, setShowFAQ] = useState(false);
+  const [isDisconnecting, setIsDisconnecting] = useState(false);
+  const [disconnectError, setDisconnectError] = useState<string | null>(null);
   const accountId = account.loginId || account.mt5Login || 'Account';
+
+  const disconnect = async () => {
+    setIsDisconnecting(true);
+    setDisconnectError(null);
+    try {
+      await onDisconnect();
+    } catch (error) {
+      setDisconnectError(error instanceof Error ? error.message : 'Could not disconnect the account.');
+    } finally {
+      setIsDisconnecting(false);
+    }
+  };
 
   return (
     <div className="pb-28 pt-4 px-5 max-w-[400px] mx-auto space-y-6 font-sans select-none bg-white min-h-screen">
@@ -123,13 +137,19 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         <PWAInstallButton />
         <button
           type="button"
-          onClick={onDisconnect}
-          className="text-rose-700 hover:text-rose-800 font-semibold flex items-center gap-1.5 py-2 transition cursor-pointer"
+          onClick={() => void disconnect()}
+          disabled={isDisconnecting}
+          className="text-rose-700 hover:text-rose-800 font-semibold flex items-center gap-1.5 py-2 transition cursor-pointer disabled:opacity-50"
         >
           <LogOut className="w-3.5 h-3.5" />
-          <span>Disconnect</span>
+          <span>{isDisconnecting ? 'Stopping MT5…' : 'Disconnect'}</span>
         </button>
       </div>
+      {disconnectError && (
+        <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
+          {disconnectError} The account remains selected so you can retry disconnecting.
+        </p>
+      )}
     </div>
   );
 };

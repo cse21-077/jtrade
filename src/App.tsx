@@ -9,7 +9,7 @@ import { BottomNavBar, AppTab } from './components/BottomNavBar';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { Mt5AccountsScreen } from './components/Mt5AccountsScreen';
 import { derivService } from './services/derivWs';
-import { getStoredMt5Account, StoredMt5Account } from './services/joemoneyMt5Api';
+import { clearStoredMt5Account, deactivateMt5Account, getMentorToken, getStoredMt5Account, StoredMt5Account } from './services/joemoneyMt5Api';
 import { getMt5MidPrice } from './services/marketPrice';
 import { getMt5Quote, useMt5Prices } from './hooks/useMt5Prices';
 import { DerivAccount, MarketSymbol, PlacedOrder, TradeNotice } from './types/trading';
@@ -61,7 +61,12 @@ export default function App() {
     setActiveTab('home');
   };
 
-  const handleDisconnect = () => {
+  const handleDisconnect = async () => {
+    if (mt5Account) {
+      await deactivateMt5Account(getMentorToken(), mt5Account.login);
+      clearStoredMt5Account();
+      setMt5Account(null);
+    }
     derivService.clearToken();
     setAccount(derivService.getAccount());
     setShowSplash(true);
@@ -155,11 +160,7 @@ export default function App() {
               <ProfileScreen
                 account={account}
                 onOpenConnect={() => setShowConnectModal(true)}
-                onDisconnect={() => {
-                  derivService.clearToken();
-                  setAccount(derivService.getAccount());
-                  setShowConnectModal(true);
-                }}
+                onDisconnect={handleDisconnect}
               />
             )}
           </main>
