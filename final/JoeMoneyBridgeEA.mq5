@@ -9,7 +9,9 @@ input string BridgeUrl = "http://127.0.0.1:8765";
 string EaToken = "dab2da53cd7c4cd9ad0116a9a85f1dab814360e3e04a42c1a45b6f6b6a34b8c2";
 input int PollSeconds = 1;
 input int SlippagePoints = 20;
-input string ReportSymbols = "XAUUSD,XAGUSD,BTCUSD,ETHUSD,Volatility 10 Index,Volatility 25 Index,Volatility 50 Index,Volatility 75 Index,Volatility 100 Index,Volatility 10 (1s) Index,Volatility 25 (1s) Index,Volatility 50 (1s) Index,Volatility 75 (1s) Index,Volatility 100 (1s) Index,Boom 500 Index,Boom 1000 Index,Crash 500 Index,Crash 1000 Index,Step Index 10,Step Index 25,Step Index 50,Step Index 75,Step Index 100,EURUSD,GBPUSD,USDJPY,AUDUSD,USDCAD,USDCHF,EURGBP,NZDUSD";
+// Fixed list, not an input: chart profiles cannot override it, so a stale
+// .chr can never resurrect old symbol names or typos on any terminal.
+string ReportSymbols = "XAUUSD,XAGUSD,BTCUSD,ETHUSD,Volatility 10 Index,Volatility 25 Index,Volatility 50 Index,Volatility 75 Index,Volatility 100 Index,Volatility 10 (1s) Index,Volatility 25 (1s) Index,Volatility 50 (1s) Index,Volatility 75 (1s) Index,Volatility 100 (1s) Index,Boom 500 Index,Boom 1000 Index,Crash 500 Index,Crash 1000 Index,Step Index 10,Step Index 25,Step Index 50,Step Index 75,Step Index 100,EURUSD,GBPUSD,USDJPY,AUDUSD,USDCAD,USDCHF,EURGBP,NZDUSD";
 input int ReportSeconds = 3;
 
 ulong g_last_status_ms = 0;
