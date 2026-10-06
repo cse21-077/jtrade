@@ -1,20 +1,22 @@
-// JoeMoney local MT5 bridge EA. Intended for a single demo account during testing.
+// JoeMoney local MT5 bridge EA. Runs one terminal per managed account slot.
 #property strict
-#property version "4.00"
+#property version "4.02"
 
 input string BridgeUrl = "http://127.0.0.1:8765";
 input string EaToken = "dab2da53cd7c4cd9ad0116a9a85f1dab814360e3e04a42c1a45b6f6b6a34b8c2";
 input int PollSeconds = 1;
 input int SlippagePoints = 20;
-input string ReportSymbols = "Volatility 10 Index,Volatility 25 Index,Volatility 50 Index,Volatility 75 Index,Volatility 100 Index,Volatility 10 (1s) Index,Volatility 25 (1s) Index,Volatility 50 (1s) Index,Volatility 75 (1s) Index,Volatility 100 (1s) Index,Boom 500 Index,Boom 1000 Index,Crash 500 Index,Crash 1000 Index,Step Index 10,Step Index 25,Step Index 50,Step Index 75,Step Index 100,XAUUSD,EURUSD,GBPUSD,USDJPY,AUDUSD,USDCAD,USDCHF,NZDUSD,BTCUSD,ETHUSD";
+input string ReportSymbols = "Volatility 10 Index,Volatility 25 Index,Volatility 50 Index,Volatility 75 Index,Volatility 100 Index,Volatility 10 (1s) Index,Volatility 25 (1s) Index,Volatility 50 (1s) Index,Volatility 75 (1s) Index,Volatility 100 (1s) Index,Boom 500 Index,Boom 1000 Index,Crash 500 Index,Crash 1000 Index,Step Index 10,Step Index 25,Step Index 50,Step Index 75,Step Index 100,frxXAUUSD,frxXAGUSD,frxEURUSD,frxGBPUSD,frxUSDJPY,frxAUDUSD,frxUSDCAD,frxUSDCHF,frxEURGBP,frxNZDUSD,BTCUSD,ETHUSD";
 input int ReportSeconds = 3;
 
 ulong g_last_status_ms = 0;
 ulong g_last_report_ms = 0;
 ulong g_last_report_warn_ms = 0;
 ulong g_last_symbol_warn_ms = 0;
+ulong g_last_status_warn_ms = 0;
 string g_last_response_headers = "";
 string g_pending_result_id = "";
+string g_pending_result_path = "";
 string g_pending_result_body = "";
 
 int OnInit()
@@ -22,7 +24,7 @@ int OnInit()
    if(PollSeconds < 1 || ReportSeconds < 1 || StringLen(EaToken) < 32)
       return INIT_PARAMETERS_INCORRECT;
    EventSetTimer(PollSeconds);
-   Print("JoeMoney EA build 4.00 ready. MT5 login: ", (long)AccountInfoInteger(ACCOUNT_LOGIN));
+   Print("JoeMoney EA build 4.02 ready. MT5 login: ", (long)AccountInfoInteger(ACCOUNT_LOGIN));
    Print("Allow WebRequest for ", BridgeUrl, " in MT5 Options > Expert Advisors.");
    return INIT_SUCCEEDED;
 }
@@ -47,6 +49,7 @@ void OnTimer()
       ReportPrices();
    }
    PollBridge();
+   PollCloses();
 }
 
 string AuthHeaders()
@@ -88,7 +91,7 @@ void PollBridge()
    {
       string retry_response;
       int retry_status;
-      if(!HttpRequest("POST", BridgeUrl + "/v1/commands/" + g_pending_result_id + "/result",
+      if(!HttpRequest("POST", BridgeUrl + g_pending_result_path,
                       g_pending_result_body, retry_response, retry_status) || retry_status != 200)
       {
          Print("JoeMoney result retry pending for command ", g_pending_result_id,
@@ -97,6 +100,7 @@ void PollBridge()
       }
       Print("JoeMoney result retry acknowledged for command ", g_pending_result_id);
       g_pending_result_id = "";
+      g_pending_result_path = "";
       g_pending_result_body = "";
       return;
    }
@@ -259,11 +263,12 @@ string JsonEscape(const string value)
 void SendResult(const string id, const bool placed, const ulong ticket, const string message)
 {
    g_pending_result_id = id;
+   g_pending_result_path = "/v1/commands/" + id + "/result";
    g_pending_result_body = "{\"status\":\"" + (placed ? "placed" : "rejected") + "\",\"ticket\":\"" +
                  (string)ticket + "\",\"message\":\"" + JsonEscape(message) + "\"}";
    string response;
    int status;
-   bool sent = HttpRequest("POST", BridgeUrl + "/v1/commands/" + id + "/result",
+   bool sent = HttpRequest("POST", BridgeUrl + g_pending_result_path,
                            g_pending_result_body, response, status);
    if(!sent || status != 200)
    {
@@ -272,24 +277,165 @@ void SendResult(const string id, const bool placed, const ulong ticket, const st
       return;
    }
    g_pending_result_id = "";
+   g_pending_result_path = "";
+   g_pending_result_body = "";
+}
+
+void PollCloses()
+{
+   if(StringLen(g_pending_result_id) > 0)
+      return; // an order result retry is still in flight; try again next timer tick
+   string url = BridgeUrl + "/v1/closes/next?login=" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN));
+   string response;
+   int status;
+   if(!HttpRequest("GET", url, "", response, status)) return;
+   if(status == 204 || status == 401 || status == 403) return;
+   if(status != 200 || StringLen(response) == 0) return;
+
+   string fields[];
+   ushort separator = StringGetCharacter("|", 0);
+   if(StringSplit(response, separator, fields) != 2)
+   {
+      Print("JoeMoney received malformed close request: ", response);
+      return;
+   }
+
+   string close_id = fields[0];
+   ulong ticket = (ulong)StringToInteger(fields[1]);
+   Print("JoeMoney processing close request ", close_id,
+         ticket == 0 ? " (all positions)" : " (position " + (string)ticket + ")");
+   string message;
+   bool closed = ExecuteClose(ticket, message);
+   Print("JoeMoney close ", close_id, closed ? " succeeded" : " failed", ": ", message);
+   SendCloseResult(close_id, closed, message);
+}
+
+bool ExecuteClose(const ulong ticket, string &message)
+{
+   if(ticket == 0)
+   {
+      int closed = 0;
+      int failed = 0;
+      string first_failure = "";
+      for(int i = PositionsTotal() - 1; i >= 0; i--)
+      {
+         ulong pos_ticket = PositionGetTicket(i);
+         if(pos_ticket == 0)
+            continue;
+         string one_message;
+         if(CloseOnePosition(pos_ticket, one_message))
+            closed++;
+         else
+         {
+            failed++;
+            if(StringLen(first_failure) == 0)
+               first_failure = one_message;
+         }
+      }
+      message = "Closed " + IntegerToString(closed) + " position(s)" +
+                (failed > 0 ? ", " + IntegerToString(failed) + " failed: " + first_failure : "");
+      return failed == 0 && closed > 0;
+   }
+   if(!PositionSelectByTicket(ticket))
+   {
+      message = "Position " + (string)ticket + " not found; it may already be closed.";
+      return false;
+   }
+   return CloseOnePosition(ticket, message);
+}
+
+bool CloseOnePosition(const ulong pos_ticket, string &message)
+{
+   if(!PositionSelectByTicket(pos_ticket))
+   {
+      message = "Position " + (string)pos_ticket + " not found.";
+      return false;
+   }
+   string symbol = PositionGetString(POSITION_SYMBOL);
+   long pos_type = PositionGetInteger(POSITION_TYPE);
+   double volume = PositionGetDouble(POSITION_VOLUME);
+   MqlTick tick;
+   if(!SymbolInfoTick(symbol, tick))
+   {
+      message = "No current quote for " + symbol;
+      return false;
+   }
+
+   MqlTradeRequest request = {};
+   MqlTradeResult result = {};
+   request.action = TRADE_ACTION_DEAL;
+   request.position = pos_ticket;
+   request.symbol = symbol;
+   request.volume = volume;
+   request.magic = 26060401;
+   request.deviation = SlippagePoints;
+   request.type = (pos_type == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+   request.price = (request.type == ORDER_TYPE_SELL) ? tick.bid : tick.ask;
+   request.type_filling = GetMarketFilling(symbol);
+   request.comment = "JoeMoney close";
+   ResetLastError();
+   if(!OrderSend(request, result))
+   {
+      message = "OrderSend failed, error " + IntegerToString(GetLastError());
+      return false;
+   }
+   if(result.retcode != TRADE_RETCODE_DONE && result.retcode != TRADE_RETCODE_DONE_PARTIAL)
+   {
+      message = "Broker rejected close, retcode " + IntegerToString((int)result.retcode) + ": " + result.comment;
+      return false;
+   }
+   message = "Closed position " + (string)pos_ticket + ", retcode " + IntegerToString((int)result.retcode);
+   return true;
+}
+
+void SendCloseResult(const string id, const bool closed, const string message)
+{
+   g_pending_result_id = id;
+   g_pending_result_path = "/v1/closes/" + id + "/result";
+   g_pending_result_body = "{\"status\":\"" + (closed ? "closed" : "failed") +
+                 "\",\"message\":\"" + JsonEscape(message) + "\"}";
+   string response;
+   int status;
+   bool sent = HttpRequest("POST", BridgeUrl + g_pending_result_path,
+                           g_pending_result_body, response, status);
+   if(!sent || status != 200)
+   {
+      Print("JoeMoney close acknowledgement failed, HTTP ", status, ", response: ", response,
+            ", headers: ", g_last_response_headers);
+      return;
+   }
+   g_pending_result_id = "";
+   g_pending_result_path = "";
    g_pending_result_body = "";
 }
 
 void SendStatus()
 {
    string login = IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN));
+   string server = AccountInfoString(ACCOUNT_SERVER);
    bool authorized = TerminalInfoInteger(TERMINAL_CONNECTED) && AccountInfoInteger(ACCOUNT_LOGIN) > 0;
-   string message = authorized ? "MT5 login successful" : "MT5 disconnected or login failed";
+   string message = authorized
+      ? "MT5 login successful on " + server
+      : "MT5 disconnected or login failed on " + server;
    double balance = authorized ? AccountInfoDouble(ACCOUNT_BALANCE) : 0;
    string currency = authorized ? AccountInfoString(ACCOUNT_CURRENCY) : "";
    string body = "{\"login\":\"" + login + "\",\"connected\":" +
                  (authorized ? "true" : "false") +
-                 ",\"message\":\"" + message + "\"," +
+                 ",\"message\":\"" + JsonEscape(message) + "\"," +
+                 "\"server\":\"" + JsonEscape(server) + "\"," +
                  "\"balance\":" + DoubleToString(balance, 2) +
                  ",\"currency\":\"" + JsonEscape(currency) + "\"}";
    string response;
    int status;
-   HttpRequest("POST", BridgeUrl + "/v1/terminal/status", body, response, status);
+   bool sent = HttpRequest("POST", BridgeUrl + "/v1/terminal/status", body, response, status);
+   if((!sent || status != 200) && GetTickCount64() - g_last_status_warn_ms >= 30000)
+   {
+      g_last_status_warn_ms = GetTickCount64();
+      Print("JoeMoney heartbeat failed: login ", login, ", MT5 server '", server,
+            "', terminal connected ", (TerminalInfoInteger(TERMINAL_CONNECTED) ? "yes" : "no"),
+            ", account trade allowed ", (AccountInfoInteger(ACCOUNT_TRADE_ALLOWED) ? "yes" : "no"),
+            ", HTTP ", status, ", response: ", response, ", headers: ", g_last_response_headers);
+   }
 }
 
 void ReportPrices()

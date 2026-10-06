@@ -180,6 +180,31 @@ export const queueMt5Orders = (token: string, login: string, orders: Mt5OrderReq
 export const getMt5Order = (token: string, orderId: string) =>
   request<Mt5QueuedOrder>(`/v1/orders/${encodeURIComponent(orderId)}`, token);
 
+export type Mt5CloseStatus = 'queued' | 'claimed' | 'closed' | 'failed';
+
+export interface Mt5CloseRequest {
+  id: string;
+  status: Mt5CloseStatus;
+  ticket?: string | null;
+  result_message?: string | null;
+  created_at?: number;
+  updated_at?: number;
+}
+
+export interface Mt5CloseBatch {
+  count: number;
+  closes: Array<{ id: string; status: Mt5CloseStatus }>;
+}
+
+export const closeMt5Positions = (token: string, login: string, tickets: string[] | 'all') =>
+  request<Mt5CloseBatch>('/v1/positions/close', token, {
+    method: 'POST',
+    body: JSON.stringify({ login, tickets }),
+  });
+
+export const getMt5Close = (token: string, closeId: string) =>
+  request<Mt5CloseRequest>(`/v1/closes/${encodeURIComponent(closeId)}`, token);
+
 export const getMt5Prices = (token: string, opts?: { login?: string; symbols?: string[] }) => {
   const params = new URLSearchParams();
   if (opts?.login) params.set('login', opts.login);

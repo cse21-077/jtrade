@@ -4,7 +4,7 @@ A single static bridge key (JOEMONEY_BRIDGE_KEY) protects every endpoint; the sa
 key is baked into the private PWA build, so clients never authenticate by hand.
 MT5 accounts are registered over HTTPS; the bridge stores credentials in the local
 SQLite database, launches portable MT5 terminals with startup.ini auto-login, and
-queues orders per account. The JoeMoney EA inside each terminal polls locally,
+queues orders and close requests per account. The JoeMoney EA inside each terminal polls locally,
 claims its account's commands, and executes them in MT5.
 """
 
@@ -41,6 +41,7 @@ ORDER_TYPES = {
 SYMBOL_RE = re.compile(r"^[A-Za-z0-9._ ()-]{1,64}$")
 LOGIN_RE = re.compile(r"^\d{4,20}$")
 HEARTBEAT_STALE_SEC = 30
+CLOSE_STATUSES = {"closed", "failed"}
 
 
 def connect_db(path: Path | None = None) -> sqlite3.Connection:
@@ -110,6 +111,20 @@ def connect_db(path: Path | None = None) -> sqlite3.Connection:
                           ("volume_limits_known", "0")):
         if name not in price_columns:
             connection.execute(f"ALTER TABLE prices ADD COLUMN {name} REAL NOT NULL DEFAULT {default}")
+    connection.execute(
+        """CREATE TABLE IF NOT EXISTS closes (
+            id TEXT PRIMARY KEY,
+            login TEXT NOT NULL DEFAULT '',
+            ticket TEXT NOT NULL,
+            status TEXT NOT NULL,
+            result_message TEXT,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL
+        )"""
+    )
+    close_columns = {row[1] for row in connection.execute("PRAGMA table_info(closes)")}
+    if "login" not in close_columns:
+        connection.execute("ALTER TABLE closes ADD COLUMN login TEXT NOT NULL DEFAULT ''")
     connection.execute(
         """CREATE TABLE IF NOT EXISTS accounts (
             login TEXT PRIMARY KEY,
@@ -258,7 +273,7 @@ def reconcile_on_boot(force_refresh: bool = False) -> None:
 
 
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "JoeMoneyBridge/2.1"
+    server_version = "JoeMoneyBridge/2.2"
 
     def log_message(self, fmt: str, *args: object) -> None:
         print(f"[{self.log_date_time_string()}] {fmt % args}")
@@ -434,6 +449,39 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 f'{row["tp_distance"]:.10f}',
             ]
             return self._send(200, "|".join(fields), "text/plain; charset=utf-8")
+        if parsed.path == "/v1/closes/next":
+            if not ea_authed(self.headers.get("Authorization", "")):
+                return self._send(401, {"error": "Unauthorized"})
+            login = parse_qs(parsed.query).get("login", [""])[0].strip()
+            now = time.time()
+            with db_session() as db:
+                account = db.execute("SELECT is_active FROM accounts WHERE login=?", (login,)).fetchone()
+                if not account:
+                    return self._send(403, {"error": "EA login is not a registered JoeMoney account."})
+                if not account["is_active"]:
+                    return self._send(403, {"error": "MT5 account is deactivated."})
+                db.execute("BEGIN IMMEDIATE")
+                row = db.execute(
+                    "SELECT * FROM closes WHERE status='queued' AND login=? ORDER BY created_at LIMIT 1", (login,)
+                ).fetchone()
+                if not row:
+                    db.commit()
+                    return self._send(204)
+                db.execute("UPDATE closes SET status='claimed',updated_at=? WHERE id=? AND status='queued'", (now, row["id"]))
+                db.commit()
+            return self._send(200, row["id"] + "|" + row["ticket"], "text/plain; charset=utf-8")
+        match = re.fullmatch(r"/v1/closes/([0-9a-f-]+)", parsed.path)
+        if match:
+            if not client_authed(self.headers.get("Authorization", "")):
+                return self._send(401, {"error": "Unauthorized"})
+            with db_session() as db:
+                row = db.execute(
+                    "SELECT id,status,ticket,result_message,created_at,updated_at FROM closes WHERE id=?",
+                    (match.group(1),),
+                ).fetchone()
+            if not row:
+                return self._send(404, {"error": "Unknown close request."})
+            return self._send(200, dict(row))
         return self._send(404, {"error": "Not found"})
 
     def do_POST(self) -> None:
@@ -572,6 +620,45 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if login not in tm.running_logins():
                 threading.Thread(target=tm.ensure_terminal, args=(dict(account),), daemon=True).start()
             return self._send(202, response_body)
+        if parsed.path == "/v1/positions/close":
+            if not client_authed(self.headers.get("Authorization", "")):
+                return self._send(401, {"error": "Unauthorized"})
+            try:
+                payload = self._read_json()
+                if not isinstance(payload, dict):
+                    raise ValueError("Request body must be an object.")
+                login = str(payload.get("login", "")).strip()
+                if not LOGIN_RE.fullmatch(login):
+                    raise ValueError("Provide a numeric MT5 login for the close request.")
+                tickets = payload.get("tickets")
+                if tickets == "all":
+                    normalized = ["0"]
+                elif isinstance(tickets, list) and 1 <= len(tickets) <= MAX_BATCH_SIZE:
+                    normalized = []
+                    for ticket in tickets:
+                        text = str(ticket).strip()
+                        if not text.isdigit() or not 1 <= len(text) <= 20:
+                            raise ValueError("Each ticket must be a numeric position ticket.")
+                        normalized.append(text)
+                else:
+                    raise ValueError(f"tickets must be 'all' or a list of 1-{MAX_BATCH_SIZE} numeric tickets.")
+            except (json.JSONDecodeError, ValueError, AttributeError) as error:
+                return self._send(400, {"error": str(error)})
+            with db_session() as db:
+                account = db.execute(
+                    "SELECT * FROM accounts WHERE login=? AND is_active=1", (login,)
+                ).fetchone()
+                if not account:
+                    return self._send(409, {"error": "Unknown or inactive MT5 account."})
+                now = time.time()
+                created = [{"id": str(uuid4()), "status": "queued"} for _ in normalized]
+                db.executemany(
+                    "INSERT INTO closes(id,login,ticket,status,created_at,updated_at) VALUES(?,?,?,'queued',?,?)",
+                    [(record["id"], login, ticket, now, now) for record, ticket in zip(created, normalized)],
+                )
+            if login not in tm.running_logins():
+                threading.Thread(target=tm.ensure_terminal, args=(dict(account),), daemon=True).start()
+            return self._send(202, {"closes": created, "count": len(created)})
         match = re.fullmatch(r"/v1/commands/([0-9a-f-]+)/result", parsed.path)
         if match:
             if not ea_authed(self.headers.get("Authorization", "")):
@@ -602,6 +689,34 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 ).rowcount
             if not updated:
                 return self._send(404, {"error": "Unknown or already completed order."})
+            return self._send(200, {"status": "recorded"})
+        match = re.fullmatch(r"/v1/closes/([0-9a-f-]+)/result", parsed.path)
+        if match:
+            if not ea_authed(self.headers.get("Authorization", "")):
+                return self._send(401, {"error": "Unauthorized"})
+            try:
+                result = self._read_json()
+                if not isinstance(result, dict) or result.get("status") not in CLOSE_STATUSES:
+                    raise ValueError("status must be closed or failed.")
+                message = str(result.get("message", ""))[:500]
+            except (json.JSONDecodeError, ValueError) as error:
+                return self._send(400, {"error": str(error)})
+            with db_session() as db:
+                existing = db.execute(
+                    "SELECT status,result_message FROM closes WHERE id=?", (match.group(1),)
+                ).fetchone()
+                if not existing:
+                    return self._send(404, {"error": "Unknown close request."})
+                if existing["status"] != "claimed":
+                    if existing["status"] == result["status"] and (existing["result_message"] or "") == message:
+                        return self._send(200, {"status": "recorded", "replayed": True})
+                    return self._send(409, {"error": "Close request already has a different final result."})
+                updated = db.execute(
+                    "UPDATE closes SET status=?,result_message=?,updated_at=? WHERE id=? AND status='claimed'",
+                    (result["status"], message, time.time(), match.group(1)),
+                ).rowcount
+            if not updated:
+                return self._send(404, {"error": "Unknown or already completed close request."})
             return self._send(200, {"status": "recorded"})
         if parsed.path == "/v1/prices":
             if not ea_authed(self.headers.get("Authorization", "")):

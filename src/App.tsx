@@ -9,13 +9,27 @@ import { BottomNavBar, AppTab } from './components/BottomNavBar';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { Mt5AccountsScreen } from './components/Mt5AccountsScreen';
 import { derivService } from './services/derivWs';
-import { clearStoredMt5Account, deactivateMt5Account, getMentorToken, getStoredMt5Account, StoredMt5Account } from './services/joemoneyMt5Api';
+import { clearStoredMt5Account, closeMt5Positions, deactivateMt5Account, getMentorToken, getMt5Close, getStoredMt5Account, StoredMt5Account } from './services/joemoneyMt5Api';
 import { getMt5MidPrice } from './services/marketPrice';
 import { getMt5Quote, useMt5Prices } from './hooks/useMt5Prices';
 import { DerivAccount, MarketSymbol, PlacedOrder, TradeNotice } from './types/trading';
 import { CheckCircle2, CircleAlert, X } from 'lucide-react';
 
 const SYMBOLS: MarketSymbol[] = SYMBOL_CATALOG;
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const pollMt5Close = async (token: string, closeId: string): Promise<void> => {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const result = await getMt5Close(token, closeId);
+    if (result.status === 'closed') return;
+    if (result.status === 'failed') {
+      throw new Error(result.result_message || 'MT5 rejected the close request.');
+    }
+    await wait(1000);
+  }
+  throw new Error('Timed out waiting for MT5 to confirm the close. Check the Orders page before retrying.');
+};
 
 import { SYMBOL_CATALOG } from './data/symbols';
 
@@ -139,6 +153,12 @@ export default function App() {
                   const target = orders.find((o) => o.id === id);
                   if (target?.derivContractId) {
                     await derivService.closeRealPosition(String(target.derivContractId));
+                  } else if (target?.mt5Ticket && mt5Account) {
+                    const token = getMentorToken();
+                    const batch = await closeMt5Positions(token, mt5Account.login, [String(target.mt5Ticket)]);
+                    await pollMt5Close(token, batch.closes[0].id);
+                  } else if (target && !target.derivContractId && !target.mt5Ticket) {
+                    throw new Error('This order has no MT5 position ticket yet — wait for it to fill first.');
                   }
                   setOrders((prev) => prev.filter((o) => o.id !== id));
                 }}
@@ -148,6 +168,15 @@ export default function App() {
                     .map((o) => String(o.derivContractId));
                   if (contractIds.length > 0) {
                     await derivService.bulkClosePositions(contractIds);
+                  }
+                  const tickets = orders
+                    .filter((o) => !o.derivContractId && o.mt5Ticket)
+                    .map((o) => String(o.mt5Ticket));
+                  if (tickets.length > 0) {
+                    if (!mt5Account) throw new Error('Connect an MT5 account before closing MT5 positions.');
+                    const token = getMentorToken();
+                    const batch = await closeMt5Positions(token, mt5Account.login, tickets);
+                    await Promise.all(batch.closes.map((close) => pollMt5Close(token, close.id)));
                   }
                   setOrders([]);
                 }}

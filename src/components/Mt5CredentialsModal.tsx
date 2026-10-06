@@ -2,7 +2,17 @@ import React, { useState } from 'react';
 import { Loader2, Lock, Server, UserRound, X } from 'lucide-react';
 import { getMentorToken, registerMt5Account, storeMt5Account, StoredMt5Account } from '../services/joemoneyMt5Api';
 
-const DERIV_SERVERS = ['Deriv-Demo','DerivSVG-Demo', 'DerivSVG-Server', 'DerivSVG-Server-02', 'DerivSVG-Server-03'];
+const DERIV_SERVERS = [
+  'Deriv-Demo',
+  'DerivBVI-Demo',
+  'DerivSVG-Demo',
+  'DerivSVG-Server',
+  'DerivSVG-Server-02',
+  'DerivSVG-Server-03',
+  'DerivBVI-Server',
+  'DerivBVI-Server-02',
+  'DerivBVI-Server-03',
+];
 
 interface Mt5CredentialsModalProps {
   onClose: () => void;

@@ -8,6 +8,7 @@ EA/chart-profile installation, process launching, and running-login detection.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -148,6 +149,32 @@ def assign_slot(used_folders: set[str]) -> Path:
     return target
 
 
+def sync_chart_token(chart_path: Path) -> None:
+    """Force the EA token stored inside a chart profile to the configured key.
+
+    Chart profiles persist the expert's input values, so a stale EaToken saved in
+    the template would override the EA's compiled default and every request from
+    that terminal would be rejected with 401 — regardless of which MT5 server the
+    account logs in to. Rewriting the line at launch makes the token independent
+    of the server and of whatever value was last saved in the chart.
+    """
+    token = os.environ.get("JOEMONEY_EA_TOKEN") or os.environ.get("JOEMONEY_BRIDGE_KEY") or ""
+    if not token or not chart_path.exists():
+        return
+    try:
+        text = chart_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return
+    if "EaToken=" not in text:
+        return
+    updated = re.sub(r"(?m)^EaToken=.*$", "EaToken=" + token, text)
+    if updated != text:
+        try:
+            chart_path.write_text(updated, encoding="utf-8")
+        except OSError:
+            pass
+
+
 def ensure_terminal(account: dict) -> tuple[bool, str]:
     """Launch the terminal for an account row if it is not already running.
 
@@ -183,7 +210,9 @@ def ensure_terminal(account: dict) -> tuple[bool, str]:
         if CHART_TEMPLATE and Path(CHART_TEMPLATE).exists():
             charts = folder / "MQL5" / "Profiles" / "Charts" / "Default"
             charts.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(CHART_TEMPLATE, charts / Path(CHART_TEMPLATE).name)
+            target_chart = charts / Path(CHART_TEMPLATE).name
+            shutil.copy2(CHART_TEMPLATE, target_chart)
+            sync_chart_token(target_chart)
         else:
             warnings.append("chart template not configured; attach the JoeMoney EA to a chart manually")
         subprocess.Popen([str(exe), "/portable", f"/config:{folder / 'startup.ini'}"], cwd=str(folder), close_fds=True)

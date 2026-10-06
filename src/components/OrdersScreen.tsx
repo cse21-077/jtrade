@@ -81,13 +81,13 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
   const handleBulkClose = async () => {
     setErrorMessage(null);
     setIsBulkClosing(true);
-    setFeedback('Liquidating positions on Deriv liquidity pool...');
+    setFeedback('Closing positions on MT5...');
     try {
       await onBulkCloseAll();
       setFeedback('All positions successfully closed!');
       setTimeout(() => setFeedback(null), 3500);
     } catch (err: any) {
-      setErrorMessage(err?.message || 'Error executing bulk close on Deriv');
+      setErrorMessage(err?.message || 'Error executing bulk close');
     } finally {
       setIsBulkClosing(false);
     }
@@ -99,7 +99,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
     try {
       await onClosePosition(id);
     } catch (err: any) {
-      setErrorMessage(err?.message || 'Failed to close position on Deriv');
+      setErrorMessage(err?.message || 'Failed to close position');
     } finally {
       setClosingId(null);
     }
@@ -190,7 +190,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
         <div className="p-3 rounded-xl bg-rose-400/10 border border-rose-400/30 text-rose-300 text-xs flex items-start gap-2">
           <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
           <div className="flex-1">
-            <div className="font-bold">Deriv Notice</div>
+            <div className="font-bold">Notice</div>
             <div className="mt-0.5">{errorMessage}</div>
           </div>
         </div>
