@@ -48,6 +48,8 @@ export const Mt5AccountsScreen: React.FC = () => {
   const [spacingDirection, setSpacingDirection] = useState<'up' | 'down'>('up');
   const [tpEnabled, setTpEnabled] = useState(true);
   const [tpDistance, setTpDistance] = useState('0.00200');
+  const [slEnabled, setSlEnabled] = useState(false);
+  const [slDistance, setSlDistance] = useState('0.00200');
   const [orders, setOrders] = useState<Mt5QueuedOrder[]>([]);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -144,6 +146,7 @@ export const Mt5AccountsScreen: React.FC = () => {
       const initial = Number(firstEntry);
       const step = Number(spacing);
       const distance = Number(tpDistance);
+      const stopDistance = Number(slDistance);
       const market = orderType.startsWith('MARKET_');
       const count = levels * copies;
       const brokerSymbol = symbol.trim();
@@ -157,6 +160,7 @@ export const Mt5AccountsScreen: React.FC = () => {
       if (count > 100) throw new Error('A batch is limited to 100 individual orders.');
       if (!market && (!Number.isFinite(initial) || initial <= 0)) throw new Error('Pending orders need an entry price greater than zero.');
       if (tpEnabled && (!Number.isFinite(distance) || distance <= 0)) throw new Error('TP distance must be greater than zero.');
+      if (slEnabled && (!Number.isFinite(stopDistance) || stopDistance <= 0)) throw new Error('SL distance must be greater than zero.');
       if (!Number.isFinite(lotSize) || lotSize <= 0) throw new Error('Volume must be greater than zero.');
 
       const payload: Mt5OrderRequest[] = [];
@@ -169,7 +173,9 @@ export const Mt5AccountsScreen: React.FC = () => {
             volume: lotSize,
             entry_price: entryPrice,
             tp_enabled: tpEnabled,
-            tp_distance: distance,
+            tp_distance: tpEnabled ? distance : 0,
+            sl_enabled: slEnabled,
+            sl_distance: slEnabled ? stopDistance : 0,
           });
         }
       }
@@ -318,12 +324,19 @@ export const Mt5AccountsScreen: React.FC = () => {
                   <option value="up">Up</option><option value="down">Down</option>
                 </select>
               </label>
-              <label className="grid gap-1.5 text-xs font-semibold text-slate-700">TP distance from live spot
+              <label className="grid gap-1.5 text-xs font-semibold text-slate-700">TP distance from entry price
                 <input type="number" min="0" step="any" value={tpDistance} onChange={(event) => setTpDistance(event.target.value)} disabled={!tpEnabled} className="h-11 rounded-md border border-slate-300 bg-white px-3 font-mono text-sm disabled:bg-slate-100" />
+              </label>
+              <label className="grid gap-1.5 text-xs font-semibold text-slate-700">SL distance from entry price
+                <input type="number" min="0" step="any" value={slDistance} onChange={(event) => setSlDistance(event.target.value)} disabled={!slEnabled} className="h-11 rounded-md border border-slate-300 bg-white px-3 font-mono text-sm disabled:bg-slate-100" />
               </label>
               <label className="col-span-2 flex min-h-10 items-center gap-2 text-xs font-semibold text-slate-700">
                 <input type="checkbox" checked={tpEnabled} onChange={(event) => setTpEnabled(event.target.checked)} className="h-4 w-4 accent-emerald-700" />
-                Attach TP computed from the broker's live quote
+                Attach TP at entry price + distance
+              </label>
+              <label className="col-span-2 flex min-h-10 items-center gap-2 text-xs font-semibold text-slate-700">
+                <input type="checkbox" checked={slEnabled} onChange={(event) => setSlEnabled(event.target.checked)} className="h-4 w-4 accent-emerald-700" />
+                Attach SL at entry price - distance
               </label>
               <button type="submit" disabled={isSubmitting || !selectedAccount.is_active} className="col-span-2 flex h-12 items-center justify-center gap-2 rounded-md bg-emerald-800 text-sm font-extrabold text-white disabled:opacity-50">
                 {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}

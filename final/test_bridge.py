@@ -300,6 +300,36 @@ class BridgeTests(unittest.TestCase):
             bridge.validate_order({"symbol": "EURUSD", "order_type": "MARKET_BUY", "volume": float("nan"),
                                    "entry_price": 0, "tp_enabled": False, "tp_distance": 0})
 
+    def test_sl_requires_positive_distance_and_valid_flag(self):
+        with self.assertRaises(ValueError):
+            bridge.validate_order({"symbol": "EURUSD", "order_type": "BUY_STOP", "volume": 0.1,
+                                   "entry_price": 1.09, "sl_enabled": True, "sl_distance": 0})
+        with self.assertRaises(ValueError):
+            bridge.validate_order({"symbol": "EURUSD", "order_type": "BUY_STOP", "volume": 0.1,
+                                   "entry_price": 1.09, "sl_enabled": "yes", "sl_distance": 0.01})
+        order = bridge.validate_order({"symbol": "EURUSD", "order_type": "BUY_STOP", "volume": 0.1,
+                                       "entry_price": 1.09, "sl_enabled": True, "sl_distance": 0.01,
+                                       "tp_enabled": True, "tp_distance": 0.02})
+        self.assertTrue(order["sl_enabled"])
+        self.assertEqual(order["sl_distance"], 0.01)
+
+    def test_command_wire_format_includes_sl_fields(self):
+        self.provision()
+        token = "test-ea-token"
+        self.request("/v1/orders", "POST", BRIDGE_KEY,
+                     {"login": "123456", "orders": [
+                         {"symbol": "EURUSD", "order_type": "BUY_STOP", "volume": 0.1,
+                          "entry_price": 1.09, "tp_enabled": True, "tp_distance": 0.02,
+                          "sl_enabled": True, "sl_distance": 0.01}
+                     ]},
+                     {"Idempotency-Key": "wire-key-1"})
+        status, command = self.request("/v1/commands/next?login=123456", token=token)
+        self.assertEqual(status, 200)
+        fields = command.decode().split("|")
+        self.assertEqual(len(fields), 9)
+        self.assertEqual(fields[7], "1")
+        self.assertAlmostEqual(float(fields[8]), 0.01)
+
     def test_ea_posts_prices_and_client_reads_them_back(self):
         self.provision()
         ticks = [

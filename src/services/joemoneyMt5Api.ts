@@ -13,6 +13,8 @@ export interface Mt5OrderRequest {
   entry_price: number;
   tp_enabled: boolean;
   tp_distance: number;
+  sl_enabled: boolean;
+  sl_distance: number;
 }
 
 export interface Mt5Account {
