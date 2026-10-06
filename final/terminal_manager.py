@@ -157,21 +157,36 @@ def sync_chart_token(chart_path: Path) -> None:
     that terminal would be rejected with 401 — regardless of which MT5 server the
     account logs in to. Rewriting the line at launch makes the token independent
     of the server and of whatever value was last saved in the chart.
+
+    MT5 writes .chr files as UTF-16, so the encoding must be detected before
+    editing; a plain text search would silently match nothing.
     """
     token = os.environ.get("JOEMONEY_EA_TOKEN") or os.environ.get("JOEMONEY_BRIDGE_KEY") or ""
     if not token or not chart_path.exists():
         return
     try:
-        text = chart_path.read_text(encoding="utf-8", errors="ignore")
+        raw = chart_path.read_bytes()
     except OSError:
+        return
+    if raw.startswith(b"\xff\xfe") or raw.startswith(b"\xfe\xff"):
+        encoding = "utf-16"
+    elif raw.startswith(b"\xef\xbb\xbf"):
+        encoding = "utf-8-sig"
+    elif b"\x00" in raw[:200]:
+        encoding = "utf-16-le"
+    else:
+        encoding = "utf-8"
+    try:
+        text = raw.decode(encoding)
+    except (UnicodeDecodeError, ValueError):
         return
     if "EaToken=" not in text:
         return
     updated = re.sub(r"(?m)^EaToken=.*$", "EaToken=" + token, text)
     if updated != text:
         try:
-            chart_path.write_text(updated, encoding="utf-8")
-        except OSError:
+            chart_path.write_bytes(updated.encode(encoding))
+        except (OSError, UnicodeError):
             pass
 
 

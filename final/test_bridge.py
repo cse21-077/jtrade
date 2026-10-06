@@ -212,6 +212,17 @@ class BridgeTests(unittest.TestCase):
         stop_managed.assert_called_once_with()
         ensure.assert_called_once()
 
+    def test_chart_token_sync_rewrites_utf16_and_utf8_bom_profiles(self):
+        token = "replacement-bridge-token"
+        with patch.dict(bridge.os.environ, {"JOEMONEY_EA_TOKEN": token}):
+            for encoding in ("utf-16", "utf-8-sig"):
+                chart = Path(self.temp_dir.name) / f"profile-{encoding}.chr"
+                chart.write_text("[Experts]\r\nEaToken=old-token\r\nOther=keep\r\n", encoding=encoding)
+                bridge.tm.sync_chart_token(chart)
+                text = chart.read_text(encoding=encoding)
+                self.assertIn(f"EaToken={token}", text)
+                self.assertIn("Other=keep", text)
+
     def test_explicit_ea_heartbeat_marks_matching_login_connected(self):
         self.provision()
         status, _ = self.request("/v1/terminal/status", "POST", "test-ea-token",

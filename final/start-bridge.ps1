@@ -81,7 +81,7 @@ New-Item -ItemType Directory -Force -Path (Split-Path $env:JOEMONEY_DB_PATH) | O
 
 Write-Host ''
 Write-Host 'JoeMoney bridge is starting.' -ForegroundColor Green
-Write-Host 'Bridge key (bake into the PWA as VITE_JOEMONEY_BRIDGE_KEY in Vercel, and set as the EA token in the JoeMoney chart profile):' -ForegroundColor Yellow
+Write-Host 'Bridge key (bake into the PWA as VITE_JOEMONEY_BRIDGE_KEY in Vercel; the EA carries the same token compiled in — if you ever change this key, update EaToken in JoeMoneyBridgeEA.mq5 and recompile with F7):' -ForegroundColor Yellow
 Write-Host $bridgeKey
 Write-Host ''
 Write-Host 'Re-launching terminals for active accounts that are not running...' -ForegroundColor DarkGray

@@ -1,9 +1,12 @@
 // JoeMoney local MT5 bridge EA. Runs one terminal per managed account slot.
 #property strict
-#property version "4.02"
+#property version "4.03"
 
 input string BridgeUrl = "http://127.0.0.1:8765";
-input string EaToken = "dab2da53cd7c4cd9ad0116a9a85f1dab814360e3e04a42c1a45b6f6b6a34b8c2";
+// Fixed at compile time on purpose. Chart profiles (.chr) can only override
+// `input` parameters — a plain global cannot be touched — so a stale token
+// saved in a chart profile can never lock a terminal out with 401s again.
+string EaToken = "dab2da53cd7c4cd9ad0116a9a85f1dab814360e3e04a42c1a45b6f6b6a34b8c2";
 input int PollSeconds = 1;
 input int SlippagePoints = 20;
 input string ReportSymbols = "Volatility 10 Index,Volatility 25 Index,Volatility 50 Index,Volatility 75 Index,Volatility 100 Index,Volatility 10 (1s) Index,Volatility 25 (1s) Index,Volatility 50 (1s) Index,Volatility 75 (1s) Index,Volatility 100 (1s) Index,Boom 500 Index,Boom 1000 Index,Crash 500 Index,Crash 1000 Index,Step Index 10,Step Index 25,Step Index 50,Step Index 75,Step Index 100,frxXAUUSD,frxXAGUSD,frxEURUSD,frxGBPUSD,frxUSDJPY,frxAUDUSD,frxUSDCAD,frxUSDCHF,frxEURGBP,frxNZDUSD,BTCUSD,ETHUSD";
@@ -24,7 +27,8 @@ int OnInit()
    if(PollSeconds < 1 || ReportSeconds < 1 || StringLen(EaToken) < 32)
       return INIT_PARAMETERS_INCORRECT;
    EventSetTimer(PollSeconds);
-   Print("JoeMoney EA build 4.02 ready. MT5 login: ", (long)AccountInfoInteger(ACCOUNT_LOGIN));
+   Print("JoeMoney EA build 4.03 ready. MT5 login: ", (long)AccountInfoInteger(ACCOUNT_LOGIN));
+   Print("EA auth token prefix: ", StringSubstr(EaToken, 0, 10), "… (", StringLen(EaToken), " chars, compiled in)");
    Print("Allow WebRequest for ", BridgeUrl, " in MT5 Options > Expert Advisors.");
    return INIT_SUCCEEDED;
 }
