@@ -81,7 +81,7 @@ define(['../../../../Documents/DevProjects/Personal/AI_Modules/jtrade/node_modul
     "revision": "3ca0b8505b4bec776b69afdba2768812"
   }, {
     "url": "index.html",
-    "revision": "0.7q9b6ujcm78"
+    "revision": "0.phf7b8jt2eg"
   }], {});
   cleanupOutdatedCaches_mjs.cleanupOutdatedCaches();
   workbox.registerRoute(new workbox.NavigationRoute(createHandlerBoundToURL_mjs.createHandlerBoundToURL("index.html"), {

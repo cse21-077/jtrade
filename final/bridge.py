@@ -17,6 +17,7 @@ import math
 import os
 import re
 import sqlite3
+import subprocess
 import threading
 import time
 from contextlib import contextmanager
@@ -447,13 +448,24 @@ class BridgeHandler(BaseHTTPRequestHandler):
             now = time.time()
             with db_session() as db:
                 existing = db.execute("SELECT * FROM accounts WHERE login=?", (account["login"],)).fetchone()
-                if existing:
+            if existing:
+                credentials_changed = (
+                    existing["password"] != account["password"] or existing["server"] != account["server"]
+                )
+                must_restart = credentials_changed or not existing["is_active"]
+                if must_restart:
+                    try:
+                        tm.stop_account_terminal(existing["folder_path"])
+                    except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+                        return self._send(503, {"error": f"Could not stop the previous MT5 terminal before updating credentials: {error}"})
+                folder_path = existing["folder_path"]
+                with db_session() as db:
                     db.execute(
                         "UPDATE accounts SET password=?,server=?,is_active=1,updated_at=? WHERE login=?",
                         (account["password"], account["server"], now, account["login"]),
                     )
-                    folder_path = existing["folder_path"]
-                else:
+            else:
+                with db_session() as db:
                     used = {
                         row[0] for row in db.execute(
                             "SELECT folder_path FROM accounts WHERE folder_path IS NOT NULL AND folder_path != ''"
@@ -486,12 +498,21 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if not client_authed(self.headers.get("Authorization", "")):
                 return self._send(401, {"error": "Unauthorized"})
             with db_session() as db:
-                updated = db.execute(
-                    "UPDATE accounts SET is_active=0,updated_at=? WHERE login=?", (time.time(), match.group(1))
-                ).rowcount
-            if not updated:
+                account = db.execute(
+                    "SELECT folder_path,is_active FROM accounts WHERE login=?", (match.group(1),)
+                ).fetchone()
+            if not account:
                 return self._send(404, {"error": "Unknown account."})
-            return self._send(200, {"status": "deactivated", "login": match.group(1)})
+            try:
+                tm.stop_account_terminal(account["folder_path"])
+            except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+                return self._send(503, {"error": f"Could not stop this account's MT5 terminal: {error}"})
+            with db_session() as db:
+                db.execute(
+                    "UPDATE accounts SET is_active=0,updated_at=? WHERE login=?",
+                    (time.time(), match.group(1)),
+                )
+            return self._send(200, {"status": "deactivated", "login": match.group(1), "terminal_stopped": True})
         if parsed.path == "/v1/orders":
             if not client_authed(self.headers.get("Authorization", "")):
                 return self._send(401, {"error": "Unauthorized"})
@@ -564,6 +585,17 @@ class BridgeHandler(BaseHTTPRequestHandler):
             except (json.JSONDecodeError, ValueError) as error:
                 return self._send(400, {"error": str(error)})
             with db_session() as db:
+                existing = db.execute(
+                    "SELECT status,ticket,result_message FROM orders WHERE id=?", (match.group(1),)
+                ).fetchone()
+                if not existing:
+                    return self._send(404, {"error": "Unknown order."})
+                if existing["status"] != "claimed":
+                    if (existing["status"] == result["status"] and
+                            (existing["ticket"] or "") == ticket and
+                            (existing["result_message"] or "") == message):
+                        return self._send(200, {"status": "recorded", "replayed": True})
+                    return self._send(409, {"error": "Order already has a different final result."})
                 updated = db.execute(
                     "UPDATE orders SET status=?,ticket=?,result_message=?,updated_at=? WHERE id=? AND status='claimed'",
                     (result["status"], ticket or None, message, time.time(), match.group(1)),

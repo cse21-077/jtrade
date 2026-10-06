@@ -59,21 +59,21 @@ export const ActiveOrdersList: React.FC<ActiveOrdersListProps> = ({
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-sky-100 shadow-sm p-4">
+    <div className="rounded-2xl bg-[#18181b] border border-[#26262b] p-4">
       {/* Header & Quick stats */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-sky-100">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#26262b]">
         <div className="flex items-center gap-3">
           <div>
-            <h3 className="text-sm font-bold text-slate-800">Active Grid Positions & Orders</h3>
-            <p className="text-[11px] text-slate-500">
+            <h3 className="text-sm font-bold text-white">Active Grid Positions & Orders</h3>
+            <p className="text-[11px] text-[#52525b]">
               Live tracking against spot price ({spotPrice.toFixed(2)})
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-400/10 text-amber-300 border border-amber-400/30">
               {pendingCount} Pending
             </span>
-            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-400/10 text-emerald-400 border border-emerald-400/30">
               {filledCount} Active
             </span>
           </div>
@@ -84,10 +84,10 @@ export const ActiveOrdersList: React.FC<ActiveOrdersListProps> = ({
           {pendingCount > 0 && (
             <button
               onClick={onFillAllPending}
-              className="px-2.5 py-1.5 rounded-lg border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 text-[11px] font-semibold flex items-center gap-1 transition"
+              className="px-2.5 py-1.5 rounded-full border border-[#26262b] bg-[#1f1f23] text-[#a1a1aa] hover:text-white text-[11px] font-semibold flex items-center gap-1 transition"
               title="Test: trigger all pending levels"
             >
-              <Play className="w-3 h-3 text-sky-600" />
+              <Play className="w-3 h-3" />
               <span>Fill Pending</span>
             </button>
           )}
@@ -96,18 +96,18 @@ export const ActiveOrdersList: React.FC<ActiveOrdersListProps> = ({
             <>
               <button
                 onClick={exportCSV}
-                className="px-2.5 py-1.5 rounded-lg border border-sky-200 bg-white text-slate-700 hover:bg-sky-50 text-[11px] font-semibold flex items-center gap-1 transition"
+                className="px-2.5 py-1.5 rounded-full border border-[#26262b] bg-[#1f1f23] text-[#a1a1aa] hover:text-white text-[11px] font-semibold flex items-center gap-1 transition"
                 title="Download CSV report"
               >
-                <Download className="w-3 h-3 text-sky-600" />
+                <Download className="w-3 h-3" />
                 <span>CSV</span>
               </button>
 
               <button
                 onClick={onCancelAll}
-                className="px-2.5 py-1.5 rounded-lg border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 text-[11px] font-semibold flex items-center gap-1 transition"
+                className="px-2.5 py-1.5 rounded-full border border-rose-400/30 bg-rose-400/10 text-rose-300 hover:bg-rose-400/20 text-[11px] font-semibold flex items-center gap-1 transition"
               >
-                <Trash2 className="w-3 h-3 text-rose-500" />
+                <Trash2 className="w-3 h-3" />
                 <span>Cancel All</span>
               </button>
             </>
@@ -117,18 +117,18 @@ export const ActiveOrdersList: React.FC<ActiveOrdersListProps> = ({
 
       {/* PnL Bar */}
       {filledCount > 0 && (
-        <div className="my-3 p-3 rounded-xl bg-gradient-to-r from-sky-50 to-blue-50 border border-sky-200 flex items-center justify-between">
+        <div className="my-3 p-3 rounded-xl bg-[#1f1f23] border border-[#26262b] flex items-center justify-between">
           <div className="text-xs">
-            <span className="text-slate-500">Unrealized Grid P&L: </span>
+            <span className="text-[#a1a1aa]">Unrealized Grid P&L: </span>
             <strong
               className={`font-black text-sm ${
-                totalPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                totalPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'
               }`}
             >
               {totalPnL >= 0 ? '+' : ''}${totalPnL.toFixed(2)} USD
             </strong>
           </div>
-          <div className="text-[11px] text-slate-500">
+          <div className="text-[11px] text-[#52525b]">
             {filledCount} contract{filledCount > 1 ? 's' : ''} currently open
           </div>
         </div>
@@ -136,10 +136,10 @@ export const ActiveOrdersList: React.FC<ActiveOrdersListProps> = ({
 
       {/* Table */}
       {orders.length === 0 ? (
-        <div className="py-12 text-center text-slate-400">
-          <Clock className="w-8 h-8 mx-auto text-sky-300 mb-2 opacity-60" />
+        <div className="py-12 text-center text-[#52525b]">
+          <Clock className="w-8 h-8 mx-auto text-[#3f3f46] mb-2 opacity-60" />
           <p className="text-xs font-semibold">No grid orders deployed yet</p>
-          <p className="text-[11px] text-slate-400 mt-0.5">
+          <p className="text-[11px] text-[#52525b] mt-0.5">
             Configure your parameters on the left and click "Deploy Grid Orders".
           </p>
         </div>
@@ -147,7 +147,7 @@ export const ActiveOrdersList: React.FC<ActiveOrdersListProps> = ({
         <div className="mt-3 overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
-              <tr className="bg-sky-50/70 border-b border-sky-100 text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+              <tr className="border-b border-[#26262b] text-[11px] font-bold text-[#52525b] uppercase tracking-wider">
                 <th className="py-2 px-3">Level / ID</th>
                 <th className="py-2 px-3">Direction</th>
                 <th className="py-2 px-3">Order Price</th>
@@ -157,7 +157,7 @@ export const ActiveOrdersList: React.FC<ActiveOrdersListProps> = ({
                 <th className="py-2 px-3 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-sky-50 text-slate-700">
+            <tbody className="divide-y divide-[#26262b] text-[#a1a1aa]">
               {orders.map((order) => {
                 const dist = +(spotPrice - order.price).toFixed(2);
                 const isSell = order.direction === 'SELL';
@@ -166,30 +166,30 @@ export const ActiveOrdersList: React.FC<ActiveOrdersListProps> = ({
                 return (
                   <tr
                     key={order.id}
-                    className={`hover:bg-sky-50/40 transition-colors ${
-                      isFilled ? 'bg-sky-50/20 font-medium' : ''
+                    className={`transition-colors ${
+                      isFilled ? 'bg-[#1f1f23]/50 font-medium' : ''
                     }`}
                   >
                     <td className="py-2.5 px-3">
                       <div className="flex items-center gap-1.5 font-mono text-[11px]">
-                        <span className="font-bold text-slate-800">#{order.levelIndex}</span>
-                        <span className="text-[10px] text-slate-400">({order.id.slice(-6)})</span>
+                        <span className="font-bold text-white">#{order.levelIndex}</span>
+                        <span className="text-[10px] text-[#52525b]">({order.id.slice(-6)})</span>
                       </div>
                     </td>
 
                     <td className="py-2.5 px-3">
                       <span
-                        className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${
+                        className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold border ${
                           isSell
-                            ? 'bg-rose-100 text-rose-700'
-                            : 'bg-emerald-100 text-emerald-700'
+                            ? 'bg-rose-400/10 text-rose-400 border-rose-400/30'
+                            : 'bg-emerald-400/10 text-emerald-400 border-emerald-400/30'
                         }`}
                       >
                         {order.direction}
                       </span>
                     </td>
 
-                    <td className="py-2.5 px-3 font-mono font-bold text-slate-800">
+                    <td className="py-2.5 px-3 font-mono font-bold text-white">
                       {order.price.toFixed(2)}
                     </td>
 
@@ -199,9 +199,9 @@ export const ActiveOrdersList: React.FC<ActiveOrdersListProps> = ({
 
                     <td className="py-2.5 px-3 font-mono text-[11px]">
                       {dist === 0 ? (
-                        <span className="text-sky-600 font-bold">At Spot</span>
+                        <span className="text-[#d6f655] font-bold">At Spot</span>
                       ) : (
-                        <span className={dist > 0 ? 'text-amber-600' : 'text-slate-500'}>
+                        <span className={dist > 0 ? 'text-amber-300' : 'text-[#52525b]'}>
                           {dist > 0 ? `+${dist}` : `${dist}`} pts
                         </span>
                       )}
@@ -209,22 +209,22 @@ export const ActiveOrdersList: React.FC<ActiveOrdersListProps> = ({
 
                     <td className="py-2.5 px-3">
                       {order.status === 'PENDING' ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#1f1f23] text-[#a1a1aa] border border-[#26262b]">
                           <Clock className="w-2.5 h-2.5" />
                           <span>Pending</span>
                         </span>
                       ) : order.status === 'FAILED' ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-400/10 text-rose-400 border border-rose-400/30">
                           <AlertCircle className="w-2.5 h-2.5" />
                           <span>Rejected</span>
                         </span>
                       ) : order.status === 'TRIGGERED' ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-50 text-sky-700 border border-sky-200">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-400/10 text-amber-300 border border-amber-400/30">
                           <Clock className="w-2.5 h-2.5" />
                           <span>Submitting</span>
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-400/10 text-emerald-400 border border-emerald-400/30">
                           <CheckCircle2 className="w-2.5 h-2.5" />
                           <span>Active / Filled</span>
                         </span>
@@ -236,7 +236,7 @@ export const ActiveOrdersList: React.FC<ActiveOrdersListProps> = ({
                         {order.status === 'PENDING' && (
                           <button
                             onClick={() => onSimulateFill(order.id)}
-                            className="p-1 rounded text-sky-600 hover:bg-sky-100 hover:text-sky-800 transition"
+                            className="p-1 rounded text-[#d6f655] hover:bg-[#1f1f23] transition"
                             title="Simulate Market Fill"
                           >
                             <Play className="w-3.5 h-3.5" />
@@ -244,7 +244,7 @@ export const ActiveOrdersList: React.FC<ActiveOrdersListProps> = ({
                         )}
                         <button
                           onClick={() => onCancelOrder(order.id)}
-                          className="p-1 rounded text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition"
+                          className="p-1 rounded text-[#52525b] hover:text-rose-400 transition"
                           title="Cancel Order"
                         >
                           <Trash2 className="w-3.5 h-3.5" />

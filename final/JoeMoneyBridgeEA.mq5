@@ -14,6 +14,8 @@ ulong g_last_report_ms = 0;
 ulong g_last_report_warn_ms = 0;
 ulong g_last_symbol_warn_ms = 0;
 string g_last_response_headers = "";
+string g_pending_result_id = "";
+string g_pending_result_body = "";
 
 int OnInit()
 {
@@ -82,6 +84,23 @@ bool HttpRequest(const string method, const string url, const string body,
 
 void PollBridge()
 {
+   if(StringLen(g_pending_result_id) > 0)
+   {
+      string retry_response;
+      int retry_status;
+      if(!HttpRequest("POST", BridgeUrl + "/v1/commands/" + g_pending_result_id + "/result",
+                      g_pending_result_body, retry_response, retry_status) || retry_status != 200)
+      {
+         Print("JoeMoney result retry pending for command ", g_pending_result_id,
+               ", HTTP ", retry_status, ", response: ", retry_response);
+         return;
+      }
+      Print("JoeMoney result retry acknowledged for command ", g_pending_result_id);
+      g_pending_result_id = "";
+      g_pending_result_body = "";
+      return;
+   }
+
    string url = BridgeUrl + "/v1/commands/next?login=" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN));
    string response;
    int status;
@@ -239,14 +258,21 @@ string JsonEscape(const string value)
 
 void SendResult(const string id, const bool placed, const ulong ticket, const string message)
 {
-   string body = "{\"status\":\"" + (placed ? "placed" : "rejected") + "\",\"ticket\":\"" +
+   g_pending_result_id = id;
+   g_pending_result_body = "{\"status\":\"" + (placed ? "placed" : "rejected") + "\",\"ticket\":\"" +
                  (string)ticket + "\",\"message\":\"" + JsonEscape(message) + "\"}";
    string response;
    int status;
-   bool sent = HttpRequest("POST", BridgeUrl + "/v1/commands/" + id + "/result", body, response, status);
+   bool sent = HttpRequest("POST", BridgeUrl + "/v1/commands/" + id + "/result",
+                           g_pending_result_body, response, status);
    if(!sent || status != 200)
+   {
       Print("JoeMoney result acknowledgement failed, HTTP ", status, ", response: ", response,
             ", headers: ", g_last_response_headers);
+      return;
+   }
+   g_pending_result_id = "";
+   g_pending_result_body = "";
 }
 
 void SendStatus()

@@ -75,13 +75,12 @@ export default function App() {
       const existingIds = new Set(prev.map((order) => order.id));
       return [...newOrders.filter((order) => !existingIds.has(order.id)), ...existing];
     });
-    setActiveTab('orders');
   };
 
   const pendingCount = orders.filter((o) => o.status === 'PENDING').length;
 
   return (
-    <div className="min-h-screen bg-white text-slate-800 flex flex-col font-sans selection:bg-slate-200">
+    <div className="min-h-screen bg-[#0e0e10] text-[#fafafa] flex flex-col font-sans selection:bg-[#26262b]">
       <OfflineIndicator />
 
       {isMt5Route ? (
@@ -92,9 +91,9 @@ export default function App() {
           onMt5Connected={handleMt5Connected}
         />
       ) : (
-        <div className="w-full max-w-md mx-auto min-h-screen bg-white flex flex-col relative">
+        <div className="w-full max-w-md mx-auto min-h-screen bg-[#0e0e10] flex flex-col relative">
           {/* Main App Screens */}
-          <main className="flex-1 bg-white overflow-y-auto">
+          <main className="flex-1 overflow-y-auto">
             {/* Tab 1: Home Dashboard (Screen 2 in ref image) */}
             {activeTab === 'home' && (
               <HomeScreen
@@ -119,6 +118,7 @@ export default function App() {
                 symbols={SYMBOLS}
                 onDeployOrders={handleDeployOrders}
                 onTradeNotice={setTradeNotice}
+                onSwitchToOrders={() => setActiveTab('orders')}
               />
             )}
 
@@ -187,15 +187,15 @@ export default function App() {
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="trade-result-title"
-                className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl"
+                className="w-full max-w-sm rounded-2xl bg-[#18181b] border border-[#26262b] p-5 shadow-2xl"
                 onClick={(event) => event.stopPropagation()}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-center gap-2">
                     {tradeNotice.outcome === 'accepted'
-                      ? <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" />
-                      : <CircleAlert className={`h-5 w-5 shrink-0 ${tradeNotice.outcome === 'unconfirmed' || tradeNotice.outcome === 'partial' ? 'text-amber-600' : 'text-rose-600'}`} />}
-                    <h2 id="trade-result-title" className="text-base font-bold text-slate-900">
+                      ? <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
+                      : <CircleAlert className={`h-5 w-5 shrink-0 ${tradeNotice.outcome === 'unconfirmed' || tradeNotice.outcome === 'partial' ? 'text-amber-400' : 'text-rose-400'}`} />}
+                    <h2 id="trade-result-title" className="text-base font-bold text-white">
                       {tradeNotice.outcome === 'accepted' ? 'Accepted by MT5'
                         : tradeNotice.outcome === 'partial' ? 'Partially accepted'
                           : tradeNotice.outcome === 'unconfirmed' ? 'Trade result unconfirmed'
@@ -203,28 +203,28 @@ export default function App() {
                               : tradeNotice.success ? 'Request accepted' : 'Trade not placed'}
                     </h2>
                   </div>
-                  <button type="button" onClick={() => setTradeNotice(null)} className="p-1 text-slate-400 hover:text-slate-800" aria-label="Close dialog">
+                  <button type="button" onClick={() => setTradeNotice(null)} className="p-1 text-[#52525b] hover:text-white" aria-label="Close dialog">
                     <X className="h-4 w-4" />
                   </button>
                 </div>
-                <p className="mt-3 text-sm text-slate-700">{tradeNotice.message}</p>
+                <p className="mt-3 text-sm text-[#a1a1aa]">{tradeNotice.message}</p>
                 {(!tradeNotice.success || tradeNotice.errorMessage) && (
-                  <p className="mt-2 text-xs text-slate-500">
+                  <p className="mt-2 text-xs text-[#52525b]">
                     {tradeNotice.errorMessage || tradeNotice.message}
                   </p>
                 )}
                 {tradeNotice.trades.length > 0 && (
-                  <div className="mt-4 max-h-48 space-y-2 overflow-y-auto border-y border-slate-100 py-3">
+                  <div className="mt-4 max-h-48 space-y-2 overflow-y-auto border-y border-[#26262b] py-3">
                     {tradeNotice.trades.map((trade, index) => (
                       <div key={`${trade.contractId || trade.symbol}-${index}`} className="flex items-center justify-between gap-2 text-xs">
-                        <span className="font-semibold text-slate-800">
+                        <span className="font-semibold text-[#fafafa]">
                           {trade.orderType ? `${trade.orderType.replace('_', ' ')} ` : `${trade.direction} `}{trade.symbol}
                         </span>
-                        <span className="text-right font-mono text-slate-500">
+                        <span className="text-right font-mono text-[#52525b]">
                           {trade.status ?? 'submitted'}{trade.lotSize ? ` · ${trade.lotSize} lots` : ''}{trade.contractId ? ` · #${trade.contractId}` : ''}
                         </span>
                         {trade.resultMessage && (
-                          <span className="basis-full text-left text-[11px] text-rose-700">{trade.resultMessage}</span>
+                          <span className="basis-full text-left text-[11px] text-rose-400">{trade.resultMessage}</span>
                         )}
                       </div>
                     ))}
@@ -235,7 +235,7 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => { setTradeNotice(null); setActiveTab('orders'); }}
-                      className="flex-1 rounded-lg bg-slate-900 px-3 py-2.5 text-xs font-bold text-white hover:bg-slate-700"
+                      className="flex-1 rounded-full bg-[#d6f655] px-3 py-2.5 text-xs font-bold text-[#0e0e10] hover:opacity-90"
                     >
                       View order status
                     </button>
@@ -243,7 +243,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => setTradeNotice(null)}
-                    className="rounded-lg border border-slate-200 px-3 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                    className="rounded-full border border-[#26262b] px-3 py-2.5 text-xs font-bold text-[#a1a1aa] hover:bg-[#1f1f23]"
                   >
                     Close
                   </button>

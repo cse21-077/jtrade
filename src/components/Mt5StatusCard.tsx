@@ -50,13 +50,13 @@ export const Mt5StatusCard: React.FC<{ account: StoredMt5Account }> = ({ account
   }, [lastCheckedAt]);
 
   const styles = {
-    pending: 'border-amber-400 bg-amber-50 text-amber-900',
-    connected: 'border-emerald-700 bg-emerald-600 text-white',
-    error: 'border-rose-400/50 bg-rose-500/10 text-rose-200',
+    pending: 'border-amber-400/40 bg-amber-400/10 text-amber-300',
+    connected: 'border-[#d6f655]/40 bg-[#d6f655]/10 text-[#d6f655]',
+    error: 'border-rose-400/40 bg-rose-400/10 text-rose-300',
   }[state];
 
   return (
-    <div className={`rounded-xl border p-3 ${styles}`}>
+    <div className={`rounded-xl border p-3 text-left ${styles}`}>
       <div className="flex items-center gap-2">
         {state === 'pending' && <Loader2 className="h-4 w-4 animate-spin" />}
         {state === 'connected' && <ShieldCheck className="h-4 w-4" />}
@@ -71,11 +71,6 @@ export const Mt5StatusCard: React.FC<{ account: StoredMt5Account }> = ({ account
           ? 'Checking status…'
           : `Last checked ${secondsSinceCheck === 0 ? 'just now' : `${secondsSinceCheck} seconds ago`} · refreshes every 5 seconds`}
       </p>
-      {state !== 'connected' && (
-        <a href="/mt5" className="mt-2 inline-block text-[11px] font-bold underline underline-offset-2">
-          Open MT5 console
-        </a>
-      )}
     </div>
   );
 };

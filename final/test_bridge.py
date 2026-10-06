@@ -118,6 +118,12 @@ class BridgeTests(unittest.TestCase):
         status, _ = self.request(f"/v1/commands/{order_id}/result", "POST", "test-ea-token",
                                  {"status": "placed", "ticket": "98765", "message": "Placed"})
         self.assertEqual(status, 200)
+        retry_status, retry_body = self.request(
+            f"/v1/commands/{order_id}/result", "POST", "test-ea-token",
+            {"status": "placed", "ticket": "98765", "message": "Placed"}
+        )
+        self.assertEqual(retry_status, 200)
+        self.assertTrue(json.loads(retry_body)["replayed"])
         lookup_status, lookup_body = self.request(f"/v1/orders/{order_id}", token=BRIDGE_KEY)
         self.assertEqual(lookup_status, 200)
         self.assertEqual(json.loads(lookup_body)["ticket"], "98765")
@@ -165,6 +171,29 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(self.request("/v1/orders", "POST", BRIDGE_KEY,
                                       {"login": "555555", "orders": [order]},
                                       {"Idempotency-Key": "inactive-login-01"})[0], 409)
+
+    def test_deactivate_stops_terminal_before_marking_account_inactive(self):
+        self.provision()
+        with bridge.db_session() as db:
+            folder_path = db.execute("SELECT folder_path FROM accounts WHERE login='123456'").fetchone()["folder_path"]
+        with patch.object(bridge.tm, "stop_account_terminal") as stop_terminal:
+            status, body = self.request("/v1/accounts/123456/deactivate", "POST", BRIDGE_KEY)
+        self.assertEqual(status, 200)
+        stop_terminal.assert_called_once_with(folder_path)
+        self.assertTrue(json.loads(body)["terminal_stopped"])
+        status, accounts_body = self.request("/v1/accounts", token=BRIDGE_KEY)
+        account = json.loads(accounts_body)["accounts"][0]
+        self.assertFalse(account["is_active"])
+
+    def test_deactivate_does_not_mark_account_inactive_if_terminal_wont_stop(self):
+        self.provision()
+        with patch.object(bridge.tm, "stop_account_terminal", side_effect=RuntimeError("still running")):
+            status, body = self.request("/v1/accounts/123456/deactivate", "POST", BRIDGE_KEY)
+        self.assertEqual(status, 503)
+        self.assertIn("still running", json.loads(body)["error"])
+        with bridge.db_session() as db:
+            account = db.execute("SELECT is_active FROM accounts WHERE login='123456'").fetchone()
+        self.assertTrue(account["is_active"])
 
     def test_polling_does_not_claim_broker_is_connected(self):
         self.provision()
@@ -225,11 +254,24 @@ class BridgeTests(unittest.TestCase):
 
     def test_reprovision_updates_credentials_without_duplicate(self):
         self.provision(server="DerivSVG-Server")
-        self.provision(server="DerivSVG-Server-03")
+        with bridge.db_session() as db:
+            folder_path = db.execute("SELECT folder_path FROM accounts WHERE login='123456'").fetchone()["folder_path"]
+        with patch.object(bridge.tm, "stop_account_terminal") as stop_terminal:
+            self.provision(server="DerivSVG-Server-03")
+        stop_terminal.assert_called_once_with(folder_path)
         status, body = self.request("/v1/accounts", token=BRIDGE_KEY)
         accounts = json.loads(body)["accounts"]
         self.assertEqual(len(accounts), 1)
         self.assertEqual(accounts[0]["server"], "DerivSVG-Server-03")
+
+    def test_reprovision_keeps_old_credentials_if_terminal_cannot_stop(self):
+        self.provision(server="DerivSVG-Server")
+        with patch.object(bridge.tm, "stop_account_terminal", side_effect=RuntimeError("still running")):
+            status, body = self.provision(server="DerivSVG-Server-03")
+        self.assertEqual(status, 503)
+        self.assertIn("still running", json.loads(body)["error"])
+        status, body = self.request("/v1/accounts", token=BRIDGE_KEY)
+        self.assertEqual(json.loads(body)["accounts"][0]["server"], "DerivSVG-Server")
 
     def test_local_order_console_is_served(self):
         status, body = self.request("/client")

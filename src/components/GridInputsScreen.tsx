@@ -12,17 +12,18 @@ import {
   TrendingDown,
   TrendingUp,
   ArrowRight,
-  ChevronDown,
-  ChevronUp,
+  ArrowLeft,
   Sparkles,
   Minus,
   Plus,
   Loader2,
+  Calculator,
+  CheckCircle2,
+  Crosshair,
 } from 'lucide-react';
 import { SymbolSearchSelect } from './SymbolSearchSelect';
 import { getMentorToken, getMt5Order, Mt5OrderRequest, queueMt5Orders, StoredMt5Account } from '../services/joemoneyMt5Api';
 import { MT5_PRICE_STALE_AFTER_SEC } from '../services/marketPrice';
-import { getTradeOutcome } from '../services/tradeOutcome';
 import { Mt5Quote } from '../hooks/useMt5Prices';
 
 interface GridInputsScreenProps {
@@ -36,9 +37,27 @@ interface GridInputsScreenProps {
   symbols: MarketSymbol[];
   onDeployOrders: (orders: PlacedOrder[]) => void;
   onTradeNotice: (notice: TradeNotice) => void;
+  onSwitchToOrders?: () => void;
 }
 
 type TradeAction = 'SELL_STOP' | 'SELL_LIMIT' | 'BUY_LIMIT' | 'BUY_STOP' | 'BUY_MARKET' | 'SELL_MARKET';
+
+const ACTION_LABELS: Record<TradeAction, string> = {
+  BUY_MARKET: 'Buy Now',
+  SELL_MARKET: 'Sell Now',
+  BUY_LIMIT: 'Buy Limit',
+  SELL_LIMIT: 'Sell Limit',
+  BUY_STOP: 'Buy Stop',
+  SELL_STOP: 'Sell Stop',
+};
+
+interface DeployResult {
+  acceptedCount: number;
+  rejectedCount: number;
+  waitingCount: number;
+  rejectionReason?: string;
+  orders: PlacedOrder[];
+}
 
 export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
   account,
@@ -51,8 +70,17 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
   symbols,
   onDeployOrders,
   onTradeNotice,
+  onSwitchToOrders,
 }) => {
   const [tradeAction, setTradeAction] = useState<TradeAction>('SELL_STOP');
+  const [showActionPicker, setShowActionPicker] = useState(false);
+  const [showReview, setShowReview] = useState(false);
+  const [deployResult, setDeployResult] = useState<DeployResult | null>(null);
+
+  const selectAction = (action: TradeAction) => {
+    setTradeAction(action);
+    setShowActionPicker(false);
+  };
 
   // Simple, intuitive trading fields
   const [startPrice, setStartPrice] = useState<number>(4165.0);
@@ -61,7 +89,6 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
   const [lotSize, setLotSize] = useState<number>(0.1);
   const [stepDirection, setStepDirection] = useState<'down' | 'up'>('down');
   const [ordersPerLevel, setOrdersPerLevel] = useState<number>(1);
-  const [showFormulaDetails, setShowFormulaDetails] = useState(false);
 
   const [isDeploying, setIsDeploying] = useState(false);
   const lastAlignedKey = useRef('');
@@ -142,8 +169,8 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
     <span
       className={`px-1 py-0.5 rounded text-[8px] font-black tracking-widest ${
         mt5PriceAge >= MT5_PRICE_STALE_AFTER_SEC
-          ? 'bg-slate-300 text-slate-600'
-          : 'bg-sky-500 text-white'
+          ? 'bg-[#26262b] text-[#52525b]'
+          : 'bg-[#d6f655] text-[#0e0e10]'
       }`}
     >
       MT5
@@ -160,14 +187,14 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
     });
   };
 
-  const handleDeploy = async () => {
+  const handleDeploy = async (): Promise<DeployResult | null> => {
     if (!mt5Account) {
       onTradeNotice({
         success: false,
         message: 'Select and connect an MT5 account before deploying orders.',
         trades: [],
       });
-      return;
+      return null;
     }
     if (mt5PriceAge === null || mt5PriceAge >= MT5_PRICE_STALE_AFTER_SEC) {
       onTradeNotice({
@@ -175,7 +202,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
         message: `MT5 quote for ${selectedSymbol.symbol} is ${mt5PriceAge === null ? 'missing' : `stale (${mt5PriceAge.toFixed(1)}s old)`}. Check the exact MT5 symbol in Market Watch and the EA ReportSymbols list before deploying.`,
         trades: [],
       });
-      return;
+      return null;
     }
     if (!mt5Quote?.volumeLimitsKnown) {
       onTradeNotice({
@@ -183,7 +210,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
         message: `MT5 has not reported volume limits for ${mt5Quote?.symbol ?? selectedSymbol.symbol}. Update and restart the EA build that reports broker min/max/step before placing trades.`,
         trades: [],
       });
-      return;
+      return null;
     }
     const volumeMin = mt5Quote?.volumeMin ?? selectedSymbol.minLot;
     const volumeMax = mt5Quote?.volumeMax ?? 100;
@@ -195,7 +222,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
         message: `Invalid volume for ${mt5Quote?.symbol ?? selectedSymbol.symbol}: choose ${volumeMin} to ${volumeMax} lots in steps of ${volumeStep}.`,
         trades: [],
       });
-      return;
+      return null;
     }
 
     setIsDeploying(true);
@@ -308,7 +335,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
             resultMessage: order.mt5ResultMessage,
           })),
         });
-        return;
+        return null;
       }
       onTradeNotice({
         success: false,
@@ -317,57 +344,52 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
         errorMessage: executionError,
         trades: [],
       });
-      return;
+      return null;
     }
 
     const acceptedCount = latestOrders.filter((order) => order.status === 'FILLED' || order.status === 'PENDING').length;
     const rejectedOrders = latestOrders.filter((order) => order.status === 'FAILED');
     const waitingCount = latestOrders.filter((order) => order.status === 'QUEUED' || order.status === 'CLAIMED').length;
     const rejectionReason = rejectedOrders.find((order) => order.mt5ResultMessage)?.mt5ResultMessage;
-    const outcome = getTradeOutcome(acceptedCount, rejectedOrders.length, waitingCount);
-    const success = outcome === 'accepted';
 
-    onTradeNotice({
-      success,
-      outcome,
-      errorMessage: rejectedOrders.length > 0 ? rejectionReason ?? `${rejectedOrders.length} order(s) were rejected by MT5.` : undefined,
-      message: `${acceptedCount} accepted by MT5; ${rejectedOrders.length} rejected; ${waitingCount} not yet confirmed by the EA. Submitted order type: ${bridgeOrders[0]?.order_type ?? 'unknown'}.`,
-      trades: latestOrders.map((order) => ({
-        symbol: order.symbol,
-        direction: order.direction,
-        orderType: order.mt5OrderType,
-        price: order.price,
-        lotSize: order.lotSize,
-        contractId: order.mt5Ticket?.toString(),
-        status: order.status,
-        resultMessage: order.mt5ResultMessage,
-      })),
-    });
+    return {
+      acceptedCount,
+      rejectedCount: rejectedOrders.length,
+      waitingCount,
+      rejectionReason: rejectedOrders.length > 0 ? rejectionReason ?? `${rejectedOrders.length} order(s) were rejected by MT5.` : undefined,
+      orders: latestOrders,
+    };
+  };
+
+  const handleArm = async () => {
+    setShowReview(false);
+    const result = await handleDeploy();
+    if (result) setDeployResult(result);
   };
 
   return (
-    <div className="pb-44 pt-3 px-4 sm:px-5 max-w-md mx-auto space-y-4 font-sans bg-white min-h-screen">
+    <div className="relative pb-44 pt-3 px-4 sm:px-5 max-w-md mx-auto space-y-4 font-sans bg-[#0e0e10] min-h-screen">
       {/* Top Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-black text-slate-900 tracking-tight">Order Desk</h2>
-          <p className="text-xs text-slate-400 font-medium">
+          <h2 className="text-2xl font-black text-white tracking-tight">Order Desk</h2>
+          <p className="text-xs text-[#52525b] font-medium">
             {account.token ? 'Live Deriv API Active' : account.mt5Server ? `MT5 (${account.mt5Login})` : 'Sandbox Simulator'}
           </p>
         </div>
 
         {/* Live Spot Pill */}
-        <div className="px-3 py-1.5 rounded-full bg-[#f4f5f7] text-slate-800 text-xs font-mono font-bold flex items-center gap-1.5 shrink-0">
+        <div className="px-3 py-1.5 rounded-full bg-[#18181b] border border-[#26262b] text-[#fafafa] text-xs font-mono font-bold flex items-center gap-1.5 shrink-0">
           <span
             className={`w-2 h-2 rounded-full animate-pulse ${
               mt5PriceAge !== null && mt5PriceAge >= MT5_PRICE_STALE_AFTER_SEC
-                ? 'bg-slate-400'
-                : 'bg-emerald-500'
+                ? 'bg-[#52525b]'
+                : 'bg-[#d6f655]'
             }`}
           />
           <span
             className={
-              mt5PriceAge !== null && mt5PriceAge >= MT5_PRICE_STALE_AFTER_SEC ? 'text-slate-400' : ''
+              mt5PriceAge !== null && mt5PriceAge >= MT5_PRICE_STALE_AFTER_SEC ? 'text-[#52525b]' : ''
             }
           >
             Spot: {mt5PriceAge !== null && mt5PriceAge < MT5_PRICE_STALE_AFTER_SEC
@@ -378,7 +400,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
         </div>
       </div>
       {mt5Account && (
-        <p className="-mt-3 text-right text-[10px] font-mono text-slate-500">
+        <p className="-mt-3 text-right text-[10px] font-mono text-[#52525b]">
           MT5 {mt5Account.login} · {mt5Quote && mt5PriceAge !== null && mt5PriceAge < MT5_PRICE_STALE_AFTER_SEC
             ? `bid ${mt5Quote.bid} / ask ${mt5Quote.ask} · ${mt5PriceAge.toFixed(1)}s`
             : 'selected account has no fresh quote for this exact symbol'}
@@ -392,23 +414,59 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
         onSelect={onSelectSymbol}
       />
 
+      {/* Hero Action Box */}
+      <div className="rounded-2xl bg-[#d6f655] p-5 text-[#0e0e10] space-y-3">
+        <div>
+          <h3 className="text-2xl font-black leading-tight tracking-tight">
+            {selectedSymbol.displayName}
+          </h3>
+          <p className="font-mono text-sm font-bold mt-0.5">
+            {mt5PriceAge !== null && mt5PriceAge < MT5_PRICE_STALE_AFTER_SEC
+              ? spotPrice.toLocaleString('en-US', {
+                  minimumFractionDigits: selectedSymbol.decimals,
+                  maximumFractionDigits: selectedSymbol.decimals,
+                })
+              : 'Waiting for live quote…'}
+            <span className="font-sans text-[10px] font-bold text-[#0e0e10]/60 ml-1.5">
+              {selectedSymbol.symbol}
+            </span>
+          </p>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-[#0e0e10]/60">Action</p>
+            <p className="text-sm font-black">{ACTION_LABELS[tradeAction]}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowActionPicker((prev) => !prev)}
+            className="rounded-full bg-[#0e0e10] text-[#d6f655] px-4 py-2 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition hover:opacity-90"
+          >
+            <Crosshair className="w-3.5 h-3.5" />
+            {showActionPicker ? 'Hide Actions' : 'Choose Action'}
+          </button>
+        </div>
+      </div>
+
+      {showActionPicker && (
+      <>
       <div className="grid grid-cols-2 gap-2 text-xs font-bold">
-        <button type="button" onClick={() => setTradeAction('BUY_MARKET')} className={`py-3 rounded-xl flex items-center justify-center gap-1.5 ${tradeAction === 'BUY_MARKET' ? 'bg-emerald-600 text-white' : 'bg-emerald-50 text-emerald-800'}`}>
+        <button type="button" onClick={() => selectAction('BUY_MARKET')} className={`py-3 rounded-xl flex items-center justify-center gap-1.5 cursor-pointer transition ${tradeAction === 'BUY_MARKET' ? 'bg-[#d6f655] text-[#0e0e10]' : 'bg-[#18181b] text-[#a1a1aa] border border-[#26262b]'}`}>
           <TrendingUp className="w-4 h-4" /> BUY MARKET · NOW
         </button>
-        <button type="button" onClick={() => setTradeAction('SELL_MARKET')} className={`py-3 rounded-xl flex items-center justify-center gap-1.5 ${tradeAction === 'SELL_MARKET' ? 'bg-rose-600 text-white' : 'bg-rose-50 text-rose-800'}`}>
+        <button type="button" onClick={() => selectAction('SELL_MARKET')} className={`py-3 rounded-xl flex items-center justify-center gap-1.5 cursor-pointer transition ${tradeAction === 'SELL_MARKET' ? 'bg-[#d6f655] text-[#0e0e10]' : 'bg-[#18181b] text-[#a1a1aa] border border-[#26262b]'}`}>
           <TrendingDown className="w-4 h-4" /> SELL MARKET · NOW
         </button>
       </div>
 
-      <div className="bg-[#f4f5f7] rounded-2xl p-1 grid grid-cols-2 gap-1 text-xs font-bold">
+      <div className="bg-[#18181b] border border-[#26262b] rounded-2xl p-1 grid grid-cols-2 gap-1 text-xs font-bold">
         <button
           type="button"
-          onClick={() => setTradeAction('SELL_STOP')}
+          onClick={() => selectAction('SELL_STOP')}
           className={`py-2 px-2.5 rounded-xl transition cursor-pointer flex flex-col items-center ${
             tradeAction === 'SELL_STOP'
-              ? 'bg-[#18181b] text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900'
+              ? 'bg-[#d6f655] text-[#0e0e10]'
+              : 'text-[#a1a1aa] hover:text-white'
           }`}
         >
           <span className="flex items-center gap-1">
@@ -420,11 +478,11 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
 
         <button
           type="button"
-          onClick={() => setTradeAction('BUY_LIMIT')}
+          onClick={() => selectAction('BUY_LIMIT')}
           className={`py-2 px-2.5 rounded-xl transition cursor-pointer flex flex-col items-center ${
             tradeAction === 'BUY_LIMIT'
-              ? 'bg-[#18181b] text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900'
+              ? 'bg-[#d6f655] text-[#0e0e10]'
+              : 'text-[#a1a1aa] hover:text-white'
           }`}
         >
           <span className="flex items-center gap-1">
@@ -436,11 +494,11 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
 
         <button
           type="button"
-          onClick={() => setTradeAction('SELL_LIMIT')}
+          onClick={() => selectAction('SELL_LIMIT')}
           className={`py-2 px-2.5 rounded-xl transition cursor-pointer flex flex-col items-center ${
             tradeAction === 'SELL_LIMIT'
-              ? 'bg-[#18181b] text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900'
+              ? 'bg-[#d6f655] text-[#0e0e10]'
+              : 'text-[#a1a1aa] hover:text-white'
           }`}
         >
           <span className="flex items-center gap-1">
@@ -452,11 +510,11 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
 
         <button
           type="button"
-          onClick={() => setTradeAction('BUY_STOP')}
+          onClick={() => selectAction('BUY_STOP')}
           className={`py-2 px-2.5 rounded-xl transition cursor-pointer flex flex-col items-center ${
             tradeAction === 'BUY_STOP'
-              ? 'bg-[#18181b] text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900'
+              ? 'bg-[#d6f655] text-[#0e0e10]'
+              : 'text-[#a1a1aa] hover:text-white'
           }`}
         >
           <span className="flex items-center gap-1">
@@ -466,14 +524,16 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
           <span className="text-[9px] font-normal opacity-70">Trigger when price rises to level</span>
         </button>
       </div>
+      </>
+      )}
 
       {/* Main Order Settings Card */}
-      <div className="bg-white rounded-[28px] p-4 sm:p-5 border border-slate-100 shadow-[0_4px_20px_rgba(0,0,0,0.02)] space-y-4">
+      <div className="bg-[#18181b] rounded-2xl p-4 sm:p-5 border border-[#26262b] space-y-4">
         {/* Field 1: Start Price */}
         <div>
           <div className="flex items-center justify-between text-xs mb-1">
-            <label className="font-bold text-slate-900">First Order Price</label>
-            <span className="text-[11px] font-mono font-medium text-slate-400 flex items-center gap-1">
+            <label className="font-bold text-[#fafafa]">First Order Price</label>
+            <span className="text-[11px] font-mono font-medium text-[#52525b] flex items-center gap-1">
               Spot: {spotPrice.toFixed(selectedSymbol.decimals)}
               {mt5Badge}
             </span>
@@ -485,7 +545,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
             inputMode="decimal"
             value={startPrice}
             onChange={(e) => setStartPrice(parseFloat(e.target.value) || 0)}
-            className="w-full px-4 py-2.5 rounded-2xl bg-[#f4f5f7] border-0 font-mono text-base font-bold text-slate-900 focus:ring-2 focus:ring-slate-900"
+            className="w-full px-4 py-2.5 rounded-2xl bg-[#1f1f23] border border-[#26262b] font-mono text-base font-bold text-white focus:ring-2 focus:ring-[#d6f655]"
           />
 
           <div className="grid grid-cols-6 gap-1 mt-1.5">
@@ -496,7 +556,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
                   key={diff}
                   type="button"
                   onClick={() => setStartPrice(p)}
-                  className="py-1 rounded-lg bg-[#f4f5f7] hover:bg-slate-200 text-[10px] font-mono font-semibold text-slate-700 cursor-pointer transition text-center"
+                  className="py-1 rounded-lg bg-[#1f1f23] text-[10px] font-mono font-semibold text-[#a1a1aa] cursor-pointer transition text-center"
                 >
                   {diff > 0 ? `+${diff}` : diff}
                 </button>
@@ -508,8 +568,8 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
         {/* Field 2: Responsive Lot Volume Selector (Fixed mobile freezing & layout) */}
         <div>
           <div className="flex items-center justify-between text-xs mb-1">
-            <label className="font-bold text-slate-900">Lot Size (Volume per Order)</label>
-            <span className="text-[10px] text-slate-400 font-medium">Deriv Stake</span>
+            <label className="font-bold text-[#fafafa]">Lot Size (Volume per Order)</label>
+            <span className="text-[10px] text-[#52525b] font-medium">Deriv Stake</span>
           </div>
 
           {/* Stepper + Input */}
@@ -517,7 +577,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
             <button
               type="button"
               onClick={() => changeLot(-0.01)}
-              className="w-10 h-10 rounded-xl bg-[#f4f5f7] hover:bg-slate-200 active:scale-95 text-slate-800 flex items-center justify-center font-bold cursor-pointer transition shrink-0"
+              className="w-10 h-10 rounded-xl bg-[#1f1f23] border border-[#26262b] active:scale-95 text-white flex items-center justify-center font-bold cursor-pointer transition shrink-0"
               title="Decrease lot"
             >
               <Minus className="w-4 h-4" />
@@ -530,13 +590,13 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
               inputMode="decimal"
               value={lotSize}
               onChange={(e) => setLotSize(Math.max(0.01, parseFloat(e.target.value) || 0.01))}
-              className="flex-1 min-w-0 px-3 py-2.5 rounded-xl bg-[#f4f5f7] border-0 font-mono text-base font-bold text-slate-900 text-center focus:ring-2 focus:ring-slate-900"
+              className="flex-1 min-w-0 px-3 py-2.5 rounded-xl bg-[#f4f5f7] border-0 font-mono text-base font-bold text-[#fafafa] text-center focus:ring-2 focus:ring-slate-900"
             />
 
             <button
               type="button"
               onClick={() => changeLot(0.01)}
-              className="w-10 h-10 rounded-xl bg-[#f4f5f7] hover:bg-slate-200 active:scale-95 text-slate-800 flex items-center justify-center font-bold cursor-pointer transition shrink-0"
+              className="w-10 h-10 rounded-xl bg-[#1f1f23] border border-[#26262b] active:scale-95 text-white flex items-center justify-center font-bold cursor-pointer transition shrink-0"
               title="Increase lot"
             >
               <Plus className="w-4 h-4" />
@@ -551,7 +611,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
                 type="button"
                 onClick={() => setLotSize(l)}
                 className={`py-1 rounded-lg text-[10px] font-bold transition cursor-pointer text-center ${
-                  lotSize === l ? 'bg-[#18181b] text-white shadow-2xs' : 'bg-[#f4f5f7] text-slate-600'
+                  lotSize === l ? 'bg-[#d6f655] text-[#0e0e10]' : 'bg-[#1f1f23] text-[#a1a1aa]'
                 }`}
               >
                 {l}L
@@ -565,14 +625,14 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
           {/* Spacing / Step */}
           <div>
             <div className="flex items-center justify-between text-xs mb-1">
-              <label className="font-bold text-slate-900">Spacing</label>
+              <label className="font-bold text-[#fafafa]">Spacing</label>
               {/* Compact Progression Toggle */}
-              <div className="flex bg-[#f4f5f7] rounded-md p-0.5">
+              <div className="flex bg-[#1f1f23] rounded-md p-0.5">
                 <button
                   type="button"
                   onClick={() => setStepDirection('down')}
                   className={`px-1.5 py-0.5 rounded text-[9px] font-bold cursor-pointer transition ${
-                    stepDirection === 'down' ? 'bg-[#18181b] text-white' : 'text-slate-500'
+                    stepDirection === 'down' ? 'bg-[#d6f655] text-[#0e0e10]' : 'text-[#52525b]'
                   }`}
                 >
                   ↓ Down
@@ -581,7 +641,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
                   type="button"
                   onClick={() => setStepDirection('up')}
                   className={`px-1.5 py-0.5 rounded text-[9px] font-bold cursor-pointer transition ${
-                    stepDirection === 'up' ? 'bg-[#18181b] text-white' : 'text-slate-500'
+                    stepDirection === 'up' ? 'bg-[#d6f655] text-[#0e0e10]' : 'text-[#52525b]'
                   }`}
                 >
                   ↑ Up
@@ -595,7 +655,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
               inputMode="decimal"
               value={stepSpacing}
               onChange={(e) => setStepSpacing(Math.max(0.001, parseFloat(e.target.value) || 0.1))}
-              className="w-full px-3 py-2 rounded-xl bg-[#f4f5f7] border-0 font-mono text-sm font-bold text-slate-900 focus:ring-2 focus:ring-slate-900"
+              className="w-full px-3 py-2 rounded-xl bg-[#1f1f23] border border-[#26262b] font-mono text-sm font-bold text-white focus:ring-2 focus:ring-[#d6f655]"
             />
 
             <div className="grid grid-cols-4 gap-1 mt-1.5">
@@ -605,7 +665,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
                   type="button"
                   onClick={() => setStepSpacing(s)}
                   className={`py-1 rounded-md text-[9px] font-bold transition cursor-pointer text-center ${
-                    stepSpacing === s ? 'bg-[#18181b] text-white' : 'bg-[#f4f5f7] text-slate-600'
+                    stepSpacing === s ? 'bg-[#d6f655] text-[#0e0e10]' : 'bg-[#1f1f23] text-[#a1a1aa]'
                   }`}
                 >
                   {s}
@@ -617,8 +677,8 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
           {/* How Many Orders */}
           <div>
             <div className="flex items-center justify-between text-xs mb-1">
-              <label className="font-bold text-slate-900">Orders</label>
-              <span className="text-[10px] text-slate-400 font-medium">Count</span>
+              <label className="font-bold text-[#fafafa]">Orders</label>
+              <span className="text-[10px] text-[#52525b] font-medium">Count</span>
             </div>
 
             <input
@@ -628,7 +688,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
               inputMode="numeric"
               value={orderCount}
               onChange={(e) => setOrderCount(Math.max(1, parseInt(e.target.value, 10) || 1))}
-              className="w-full px-3 py-2 rounded-xl bg-[#f4f5f7] border-0 font-mono text-sm font-bold text-slate-900 focus:ring-2 focus:ring-slate-900"
+              className="w-full px-3 py-2 rounded-xl bg-[#1f1f23] border border-[#26262b] font-mono text-sm font-bold text-white focus:ring-2 focus:ring-[#d6f655]"
             />
 
             <div className="grid grid-cols-4 gap-1 mt-1.5">
@@ -638,7 +698,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
                   type="button"
                   onClick={() => setOrderCount(cnt)}
                   className={`py-1 rounded-md text-[9px] font-bold transition cursor-pointer text-center ${
-                    orderCount === cnt ? 'bg-[#18181b] text-white' : 'bg-[#f4f5f7] text-slate-600'
+                    orderCount === cnt ? 'bg-[#d6f655] text-[#0e0e10]' : 'bg-[#1f1f23] text-[#a1a1aa]'
                   }`}
                 >
                   {cnt}
@@ -649,97 +709,208 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
         </div>
       </div>
 
-      {/* Clear Plain-English Order Summary & Deploy CTA */}
-      <div className="bg-[#18181b] text-white rounded-[28px] p-5 shadow-sm space-y-3">
+      {/* Order Summary + Review CTA */}
+      <div className="bg-[#18181b] text-white rounded-2xl p-5 border border-[#26262b] space-y-3">
         <div>
-          <div className="flex items-center gap-1.5 text-[10px] font-bold text-neutral-400 uppercase tracking-wider">
-            <Sparkles className="w-3 h-3 text-[#fbcfe8]" />
+          <div className="flex items-center gap-1.5 text-[10px] font-bold text-[#52525b] uppercase tracking-wider">
+            <Sparkles className="w-3 h-3 text-[#d6f655]" />
             <span>
               {isMarketOrder ? 'Live market execution' : 'Live price-triggered execution'}
             </span>
           </div>
 
-          <div className="text-sm font-bold mt-1 text-neutral-100 leading-snug">
+          <div className="text-sm font-bold mt-1 text-[#fafafa] leading-snug">
             {isMarketOrder
               ? `Execute ${totalOrders} ${direction} market order(s) now at the live price.`
               : `Place ${totalOrders} ${direction} ${orderType} trigger(s) from ${startPrice.toFixed(selectedSymbol.decimals)} ${stepDirection} to ${endPrice.toFixed(selectedSymbol.decimals)}.`}
           </div>
 
-          <div className="text-[11px] text-neutral-400 font-mono mt-1">
-            Total volume: {totalVolume} Lots · {isMarketOrder ? 'Submitted to Deriv now' : 'Sent to Deriv when the selected price is reached'}
+          <div className="text-[11px] text-[#52525b] font-mono mt-1">
+            Total volume: {totalVolume} lots · {isMarketOrder ? 'Executed immediately at market' : 'Placed on MT5 when the price is reached'}
           </div>
         </div>
 
         <button
           type="button"
           disabled={isDeploying}
-          onClick={handleDeploy}
-          className="w-full py-3.5 rounded-full bg-white hover:bg-neutral-100 active:scale-98 text-slate-900 font-black text-sm shadow-md flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50"
+          onClick={() => setShowReview(true)}
+          className="w-full py-3.5 rounded-full bg-[#d6f655] hover:opacity-90 active:scale-98 text-[#0e0e10] font-black text-sm flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50"
         >
-          {isDeploying ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              <span>Placing to Deriv API...</span>
-            </>
-          ) : (
-            <>
-              <span>{isDeploying ? 'Sending to Deriv...' : isMarketOrder ? `Execute ${totalOrders} Market Order(s) Now` : `Arm ${totalOrders} Price Trigger(s)`}</span>
-              <ArrowRight className="w-4 h-4" />
-            </>
-          )}
+          <span>Review & Arm · {totalOrders} order(s)</span>
+          <ArrowRight className="w-4 h-4" />
         </button>
       </div>
 
-      {/* Order Ladder Preview */}
-      <div className="bg-white rounded-[28px] p-4 border border-slate-100 shadow-[0_4px_20px_rgba(0,0,0,0.02)] space-y-2">
-        <div className="flex items-center justify-between text-xs pb-1.5 border-b border-slate-100">
-          <span className="font-extrabold text-slate-900">Planned Positions</span>
-          <button
-            type="button"
-            onClick={() => setShowFormulaDetails(!showFormulaDetails)}
-            className="text-[10px] font-semibold text-slate-400 hover:text-slate-700 flex items-center gap-1 cursor-pointer"
-          >
-            <span>Formula (u-x-zy)</span>
-            {showFormulaDetails ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-          </button>
-        </div>
+      {/* Floating FOP (First Order Price) button */}
+      <button
+        type="button"
+        onClick={() => setShowReview(true)}
+        className="fixed bottom-24 right-4 z-40 flex flex-col items-center gap-1 cursor-pointer group"
+        title="Review First Order Price"
+      >
+        <span className="w-14 h-14 rounded-full bg-[#d6f655] text-[#0e0e10] shadow-lg flex items-center justify-center group-active:scale-95 transition">
+          <Calculator className="w-6 h-6" />
+        </span>
+        <span className="text-[9px] font-black tracking-widest text-[#d6f655]">FOP</span>
+      </button>
 
-        {showFormulaDetails && (
-          <div className="p-2.5 rounded-xl bg-[#f4f5f7] text-[10px] font-mono text-slate-600 space-y-1">
-            <div>u = Spot ({spotPrice})</div>
-            <div>x = Offset ({(spotPrice - startPrice).toFixed(2)})</div>
-            <div>t = Lot Size ({lotSize})</div>
-            <div>y = Step Spacing ({stepSpacing})</div>
-            <div>z = {orderCount - 1} steps</div>
+      {/* Review Order overlay */}
+      {showReview && (
+        <div className="absolute inset-0 z-50 bg-[#0e0e10] flex flex-col" role="dialog" aria-label="Review order">
+          <div className="flex items-center gap-3 px-4 pt-4 pb-3 border-b border-[#26262b]">
+            <button
+              type="button"
+              onClick={() => setShowReview(false)}
+              className="p-2 rounded-full bg-[#18181b] border border-[#26262b] text-[#a1a1aa] cursor-pointer"
+              aria-label="Back to order desk"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+            <h3 className="text-base font-black text-white tracking-tight">Review Order</h3>
           </div>
-        )}
 
-        <div className="divide-y divide-slate-100 max-h-44 overflow-y-auto font-mono text-xs">
-          {ladderLevels.map((lvl) => (
-            <div key={lvl.levelIndex} className="py-2 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#f4f5f7] text-slate-800">
-                  #{lvl.levelIndex + 1}
-                </span>
-                <span className="text-slate-600 font-bold text-xs">
-                  {lvl.price.toFixed(selectedSymbol.decimals)}
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2 text-right">
-                <span
-                  className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${
-                    direction === 'SELL' ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'
-                  }`}
-                >
-                  {direction}
-                </span>
-                <span className="text-[10px] text-slate-400">{lvl.lotSize}L</span>
-              </div>
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+            {/* Payment Summary */}
+            <div className="rounded-2xl bg-[#18181b] border border-[#26262b] p-4 space-y-3">
+              <p className="text-[10px] font-bold text-[#52525b] uppercase tracking-widest">Order Summary</p>
+              {([
+                ['Product Name', selectedSymbol.displayName],
+                ['Action', ACTION_LABELS[tradeAction]],
+                ['First Order Price', isMarketOrder ? 'Live market price' : startPrice.toFixed(selectedSymbol.decimals)],
+                ['Number of Orders', String(totalOrders)],
+                ['Total Volume', `${totalVolume} lots`],
+                ...(!isMarketOrder ? [['Step Spacing', `${stepSpacing} ${stepDirection}`]] : []),
+                ['MT5 Account', mt5Account ? mt5Account.login : 'Not connected'],
+              ] as Array<[string, string]>).map(([label, value]) => (
+                <div key={label} className="flex items-center justify-between text-xs gap-3">
+                  <span className="text-[#52525b] font-medium">{label}</span>
+                  <span className="font-mono font-bold text-[#fafafa] text-right truncate">{value}</span>
+                </div>
+              ))}
             </div>
-          ))}
+
+            {/* Locked action row */}
+            <div className="flex items-center gap-3 rounded-2xl bg-[#18181b] border border-[#26262b] p-4">
+              <span className="w-9 h-9 rounded-xl bg-[#1f1f23] flex items-center justify-center shrink-0">
+                <Crosshair className="w-4 h-4 text-[#d6f655]" />
+              </span>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-bold text-white">{ACTION_LABELS[tradeAction]}</p>
+                <p className="text-[10px] text-[#52525b]">Locked action · {selectedSymbol.symbol}</p>
+              </div>
+              <CheckCircle2 className="w-5 h-5 text-[#d6f655] shrink-0" />
+            </div>
+
+            <p className="text-[10px] text-[#52525b] leading-relaxed px-1">
+              {isMarketOrder
+                ? 'Arming sends market orders to MT5 for immediate execution at the current price.'
+                : 'Arming places pending orders on MT5. They trigger when the market reaches your levels.'}
+            </p>
+          </div>
+
+          <div className="px-4 pb-6 pt-2 space-y-2 border-t border-[#26262b]">
+            <button
+              type="button"
+              disabled={isDeploying}
+              onClick={handleArm}
+              className="w-full py-4 rounded-full bg-[#d6f655] text-[#0e0e10] font-black text-sm flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50 active:scale-98"
+            >
+              {isDeploying ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Placing to MT5…</span>
+                </>
+              ) : (
+                <span>ARM · {totalOrders} order(s)</span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowReview(false)}
+              className="w-full py-2 text-xs font-bold text-[#52525b] hover:text-[#a1a1aa] cursor-pointer"
+            >
+              Back to desk
+            </button>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Success overlay */}
+      {deployResult && (
+        <div className="absolute inset-0 z-50 bg-[#0e0e10] flex flex-col items-center justify-center px-6 text-center" role="dialog" aria-label="Orders armed">
+          <div className="w-full max-w-sm space-y-5">
+            <div className="flex flex-col items-center gap-3">
+              <span className="w-16 h-16 rounded-full bg-[#d6f655] flex items-center justify-center">
+                <CheckCircle2 className="w-8 h-8 text-[#0e0e10]" />
+              </span>
+              <h3 className="text-xl font-black text-white tracking-tight">Yay! Orders armed!</h3>
+              <p className="text-xs text-[#a1a1aa] leading-relaxed">
+                {deployResult.acceptedCount} accepted by MT5
+                {deployResult.rejectedCount > 0 && ` · ${deployResult.rejectedCount} rejected`}
+                {deployResult.waitingCount > 0 && ` · ${deployResult.waitingCount} pending EA confirmation`}.
+              </p>
+            </div>
+
+            <div className="rounded-2xl bg-[#18181b] border border-[#26262b] p-4 space-y-2.5 text-left">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-bold text-white truncate">
+                  {selectedSymbol.displayName} · {ACTION_LABELS[tradeAction]}
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[9px] font-black tracking-widest bg-[#d6f655]/15 text-[#d6f655] shrink-0">
+                  {deployResult.orders[0]?.status === 'FAILED' ? 'REJECTED' : deployResult.orders[0]?.status ?? 'QUEUED'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-[#52525b]">First Order Price</span>
+                <span className="font-mono font-bold text-[#fafafa]">
+                  {isMarketOrder ? 'Market' : startPrice.toFixed(selectedSymbol.decimals)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-[#52525b]">Total Volume</span>
+                <span className="font-mono font-bold text-[#fafafa]">{totalVolume} lots</span>
+              </div>
+              {deployResult.rejectionReason && (
+                <p className="text-[10px] text-rose-400">{deployResult.rejectionReason}</p>
+              )}
+            </div>
+
+            {deployResult.orders.length > 1 && (
+              <div className="rounded-2xl bg-[#18181b] border border-[#26262b] p-4 space-y-2 text-left">
+                <p className="text-[10px] font-bold text-[#52525b] uppercase tracking-widest">Other Orders</p>
+                {deployResult.orders.slice(1, 6).map((order) => (
+                  <div key={order.id} className="flex items-center justify-between gap-2 text-xs">
+                    <span className="font-mono font-bold text-[#a1a1aa]">{order.price.toFixed(selectedSymbol.decimals)}</span>
+                    <span className="text-[#52525b]">{order.lotSize} lots</span>
+                    <span className="font-mono text-[10px] text-[#a1a1aa]">{order.status}</span>
+                  </div>
+                ))}
+                {deployResult.orders.length > 6 && (
+                  <p className="text-[10px] text-[#52525b]">+{deployResult.orders.length - 6} more in Orders</p>
+                )}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                setDeployResult(null);
+                onSwitchToOrders?.();
+              }}
+              className="w-full py-4 rounded-full bg-[#d6f655] text-[#0e0e10] font-black text-sm cursor-pointer active:scale-98"
+            >
+              Go to Orders
+            </button>
+            <button
+              type="button"
+              onClick={() => setDeployResult(null)}
+              className="w-full py-2 text-xs font-bold text-[#52525b] hover:text-[#a1a1aa] cursor-pointer"
+            >
+              Back to desk
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
