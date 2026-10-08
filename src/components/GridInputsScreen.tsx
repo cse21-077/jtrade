@@ -40,13 +40,11 @@ interface GridInputsScreenProps {
   onSwitchToOrders?: () => void;
 }
 
-type TradeAction = 'SELL_STOP' | 'SELL_LIMIT' | 'BUY_LIMIT' | 'BUY_STOP' | 'BUY_MARKET' | 'SELL_MARKET';
+type TradeAction = 'SELL_STOP' | 'BUY_STOP' | 'BUY_MARKET' | 'SELL_MARKET';
 
 const ACTION_LABELS: Record<TradeAction, string> = {
   BUY_MARKET: 'Buy Now',
   SELL_MARKET: 'Sell Now',
-  BUY_LIMIT: 'Buy Limit',
-  SELL_LIMIT: 'Sell Limit',
   BUY_STOP: 'Buy Stop',
   SELL_STOP: 'Sell Stop',
 };
@@ -104,11 +102,11 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
       return;
     }
     lastAlignedKey.current = key;
-    if (tradeAction === 'SELL_STOP' || tradeAction === 'BUY_LIMIT') {
+    if (tradeAction === 'SELL_STOP') {
       const initial = +(spotPrice - 5.0).toFixed(selectedSymbol.decimals);
       setStartPrice(initial > 0 ? initial : +(spotPrice * 0.99).toFixed(selectedSymbol.decimals));
       setStepDirection('down');
-    } else if (tradeAction === 'SELL_LIMIT' || tradeAction === 'BUY_STOP') {
+    } else if (tradeAction === 'BUY_STOP') {
       setStartPrice(+(spotPrice + 5.0).toFixed(selectedSymbol.decimals));
       setStepDirection('up');
     } else {
@@ -119,13 +117,13 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
   // Derive direction & order type
   const direction: OrderDirection = tradeAction.startsWith('SELL') ? 'SELL' : 'BUY';
   const isMarketOrder = tradeAction.endsWith('MARKET');
-  const orderType: OrderType = tradeAction.includes('STOP') ? 'STOP' : 'LIMIT';
+  const orderType: OrderType = 'STOP';
 
   // Calculate ladder levels
   const ladderLevels: LadderLevel[] = useMemo(() => {
     const list: LadderLevel[] = [];
     let cumLots = 0;
-    const safeCount = Math.min(25, Math.max(1, orderCount));
+    const safeCount = Math.min(100, Math.max(1, orderCount));
 
     for (let k = 0; k < safeCount; k++) {
       const priceOffset = k * stepSpacing;
@@ -264,9 +262,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
             orderType,
             mt5OrderType: isMarketOrder
               ? (direction === 'BUY' ? 'MARKET_BUY' : 'MARKET_SELL')
-              : (direction === 'BUY'
-                ? (tradeAction === 'BUY_LIMIT' ? 'BUY_LIMIT' : 'BUY_STOP')
-                : (tradeAction === 'SELL_LIMIT' ? 'SELL_LIMIT' : 'SELL_STOP')),
+              : (direction === 'BUY' ? 'BUY_STOP' : 'SELL_STOP'),
             price: level.price,
             lotSize: level.lotSize,
             status: 'QUEUED',
@@ -276,9 +272,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
             symbol: mt5Quote?.symbol ?? selectedSymbol.symbol,
             order_type: isMarketOrder
               ? (direction === 'BUY' ? 'MARKET_BUY' : 'MARKET_SELL')
-              : (direction === 'BUY'
-                ? (tradeAction === 'BUY_LIMIT' ? 'BUY_LIMIT' : 'BUY_STOP')
-                : (tradeAction === 'SELL_LIMIT' ? 'SELL_LIMIT' : 'SELL_STOP')),
+              : (direction === 'BUY' ? 'BUY_STOP' : 'SELL_STOP'),
             volume: level.lotSize,
             entry_price: isMarketOrder ? 0 : level.price,
             tp_enabled: tpEnabled,
@@ -500,38 +494,6 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
 
         <button
           type="button"
-          onClick={() => selectAction('BUY_LIMIT')}
-          className={`py-2 px-2.5 rounded-xl transition cursor-pointer flex flex-col items-center ${
-            tradeAction === 'BUY_LIMIT'
-              ? 'bg-[#d6f655] text-[#0e0e10]'
-              : 'text-[#a1a1aa] hover:text-white'
-          }`}
-        >
-          <span className="flex items-center gap-1">
-            <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
-            <span>BUY LIMIT</span>
-          </span>
-          <span className="text-[9px] font-normal opacity-70">Trigger when price falls to level</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => selectAction('SELL_LIMIT')}
-          className={`py-2 px-2.5 rounded-xl transition cursor-pointer flex flex-col items-center ${
-            tradeAction === 'SELL_LIMIT'
-              ? 'bg-[#d6f655] text-[#0e0e10]'
-              : 'text-[#a1a1aa] hover:text-white'
-          }`}
-        >
-          <span className="flex items-center gap-1">
-            <TrendingDown className="w-3.5 h-3.5 text-rose-400" />
-            <span>SELL LIMIT</span>
-          </span>
-          <span className="text-[9px] font-normal opacity-70">Trigger when price rises to level</span>
-        </button>
-
-        <button
-          type="button"
           onClick={() => selectAction('BUY_STOP')}
           className={`py-2 px-2.5 rounded-xl transition cursor-pointer flex flex-col items-center ${
             tradeAction === 'BUY_STOP'
@@ -706,7 +668,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
             <input
               type="number"
               min="1"
-              max="25"
+              max="100"
               inputMode="numeric"
               value={orderCount}
               onChange={(e) => setOrderCount(Math.max(1, parseInt(e.target.value, 10) || 1))}
@@ -714,7 +676,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
             />
 
             <div className="grid grid-cols-4 gap-1 mt-1.5">
-              {[3, 5, 10, 15].map((cnt) => (
+              {[10, 25, 50, 100].map((cnt) => (
                 <button
                   key={cnt}
                   type="button"

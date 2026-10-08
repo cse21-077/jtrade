@@ -19,8 +19,6 @@ import {
 const ORDER_TYPES: Array<{ value: Mt5OrderType; label: string }> = [
   { value: 'MARKET_BUY', label: 'Buy market' },
   { value: 'MARKET_SELL', label: 'Sell market' },
-  { value: 'BUY_LIMIT', label: 'Buy limit' },
-  { value: 'SELL_LIMIT', label: 'Sell limit' },
   { value: 'BUY_STOP', label: 'Buy stop' },
   { value: 'SELL_STOP', label: 'Sell stop' },
 ];

@@ -1,6 +1,6 @@
 // JoeMoney local MT5 bridge EA. Runs one terminal per managed account slot.
 #property strict
-#property version "7.00"
+#property version "7.10"
 
 input string BridgeUrl = "http://127.0.0.1:8765";
 // Fixed at compile time on purpose. Chart profiles (.chr) can only override
@@ -11,7 +11,7 @@ input int PollSeconds = 1;
 input int SlippagePoints = 20;
 // Fixed list, not an input: chart profiles cannot override it, so a stale
 // .chr can never resurrect old symbol names or typos on any terminal.
-string ReportSymbols = "XAUUSD,XAGUSD,BTCUSD,ETHUSD,Volatility 10 Index,Volatility 25 Index,Volatility 50 Index,Volatility 75 Index,Volatility 100 Index,Volatility 10 (1s) Index,Volatility 25 (1s) Index,Volatility 50 (1s) Index,Volatility 75 (1s) Index,Volatility 100 (1s) Index,Boom 500 Index,Boom 1000 Index,Crash 500 Index,Crash 1000 Index,Step Index 10,Step Index 25,Step Index 50,Step Index 75,Step Index 100,EURUSD,GBPUSD,USDJPY,AUDUSD,USDCAD,USDCHF,EURGBP,NZDUSD";
+string ReportSymbols = "XAUUSD";
 input int ReportSeconds = 3;
 
 ulong g_last_status_ms = 0;
@@ -29,7 +29,7 @@ int OnInit()
    if(PollSeconds < 1 || ReportSeconds < 1 || StringLen(EaToken) < 32)
       return INIT_PARAMETERS_INCORRECT;
    EventSetTimer(PollSeconds);
-   Print("JoeMoney EA build 7.00 ready. MT5 login: ", (long)AccountInfoInteger(ACCOUNT_LOGIN));
+   Print("JoeMoney EA build 7.10 ready. MT5 login: ", (long)AccountInfoInteger(ACCOUNT_LOGIN));
    Print("Allow WebRequest for ", BridgeUrl, " in MT5 Options > Expert Advisors.");
    return INIT_SUCCEEDED;
 }
@@ -107,44 +107,54 @@ void PollBridge()
       g_pending_result_id = "";
       g_pending_result_path = "";
       g_pending_result_body = "";
-      return;
    }
 
-   string url = BridgeUrl + "/v1/commands/next?login=" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN));
-   string response;
-   int status;
-   if(!HttpRequest("GET", url, "", response, status)) return;
-   if(status == 204 || status == 401 || status == 403) return;
-   if(status != 200 || StringLen(response) == 0) return;
-
-   string fields[];
-   ushort separator = StringGetCharacter("|", 0);
-   int count = StringSplit(response, separator, fields);
-   if(count != 9)
+   // Drain the queue in a tight loop: claim -> execute -> ack, until the bridge
+   // returns 204 (empty), an error, or the per-tick cap. This is what lets a
+   // 100-order batch land in seconds instead of one order per timer tick.
+   int processed = 0;
+   while(processed < 150)
    {
-      Print("JoeMoney received malformed command: ", response);
-      return;
-   }
+      string url = BridgeUrl + "/v1/commands/next?login=" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN));
+      string response;
+      int status;
+      if(!HttpRequest("GET", url, "", response, status)) break;
+      if(status == 204 || status == 401 || status == 403) break;
+      if(status != 200 || StringLen(response) == 0) break;
 
-   string command_id = fields[0];
-   string symbol = fields[1];
-   string order_type = fields[2];
-   double volume = StringToDouble(fields[3]);
-   double entry_price = StringToDouble(fields[4]);
-   bool tp_enabled = fields[5] == "1";
-   double tp_distance = StringToDouble(fields[6]);
-   bool sl_enabled = fields[7] == "1";
-   double sl_distance = StringToDouble(fields[8]);
+      string fields[];
+      ushort separator = StringGetCharacter("|", 0);
+      int count = StringSplit(response, separator, fields);
+      if(count != 9)
+      {
+         Print("JoeMoney received malformed command: ", response);
+         break;
+      }
+
+      string command_id = fields[0];
+      string symbol = fields[1];
+      string order_type = fields[2];
+      double volume = StringToDouble(fields[3]);
+      double entry_price = StringToDouble(fields[4]);
+      bool tp_enabled = fields[5] == "1";
+      double tp_distance = StringToDouble(fields[6]);
+      bool sl_enabled = fields[7] == "1";
+      double sl_distance = StringToDouble(fields[8]);
 
       Print("JoeMoney processing ", order_type, " ", symbol, " volume ", DoubleToString(volume, 2),
          " entry ", DoubleToString(entry_price, 8), " command ", command_id);
-   string message;
-   ulong ticket = 0;
-   bool placed = ExecuteOrder(symbol, order_type, volume, entry_price, tp_enabled, tp_distance,
-                              sl_enabled, sl_distance, ticket, message);
+      string message;
+      ulong ticket = 0;
+      bool placed = ExecuteOrder(symbol, order_type, volume, entry_price, tp_enabled, tp_distance,
+                                 sl_enabled, sl_distance, ticket, message);
       Print("JoeMoney execution ", (placed ? "accepted" : "rejected"), " command ", command_id,
          ": ", message);
-   SendResult(command_id, placed, ticket, message);
+      if(!SendResult(command_id, placed, ticket, message))
+         break; // ack will be retried on the next timer tick before claiming more
+      processed++;
+   }
+   if(processed > 0)
+      Print("JoeMoney command batch complete: ", processed, " order(s) this tick");
 }
 
 bool ExecuteOrder(const string symbol, const string order_type, const double requested_volume,
@@ -275,7 +285,7 @@ string JsonEscape(const string value)
    return output;
 }
 
-void SendResult(const string id, const bool placed, const ulong ticket, const string message)
+bool SendResult(const string id, const bool placed, const ulong ticket, const string message)
 {
    g_pending_result_id = id;
    g_pending_result_path = "/v1/commands/" + id + "/result";
@@ -289,11 +299,12 @@ void SendResult(const string id, const bool placed, const ulong ticket, const st
    {
       Print("JoeMoney result acknowledgement failed, HTTP ", status, ", response: ", response,
             ", headers: ", g_last_response_headers);
-      return;
+      return false; // g_pending_result_* stays set; PollBridge retries before claiming more
    }
    g_pending_result_id = "";
    g_pending_result_path = "";
    g_pending_result_body = "";
+   return true;
 }
 
 void PollCloses()
