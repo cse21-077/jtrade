@@ -45,6 +45,7 @@ class BridgeTests(unittest.TestCase):
         ]
         for item in cls.patches:
             item.start()
+        bridge.initialize_db(cls.db_path)
 
     @classmethod
     def tearDownClass(cls):
@@ -127,6 +128,28 @@ class BridgeTests(unittest.TestCase):
         lookup_status, lookup_body = self.request(f"/v1/orders/{order_id}", token=BRIDGE_KEY)
         self.assertEqual(lookup_status, 200)
         self.assertEqual(json.loads(lookup_body)["ticket"], "98765")
+
+    def test_order_status_batch_returns_requested_order(self):
+        self.provision()
+        order = {"symbol": "EURUSD", "order_type": "BUY_STOP", "volume": 0.1,
+                 "entry_price": 1.09, "tp_enabled": False, "tp_distance": 0}
+        _, created_body = self.request("/v1/orders", "POST", BRIDGE_KEY,
+                                       {"login": "123456", "orders": [order, order]},
+                                       {"Idempotency-Key": "status-batch-01"})
+        order_ids = [order["id"] for order in json.loads(created_body)["orders"]]
+        status, body = self.request(
+            f"/v1/orders/status?ids={order_ids[1]},{order_ids[0]}", token=BRIDGE_KEY
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual([order["id"] for order in json.loads(body)["orders"]], order_ids[::-1])
+        self.assertEqual(
+            self.request(f"/v1/orders/status?ids={order_ids[0]}", token="wrong-key")[0],
+            401,
+        )
+        self.assertEqual(
+            self.request("/v1/orders/status?ids=invalid", token=BRIDGE_KEY)[0],
+            400,
+        )
 
     def test_ea_rejection_reason_is_returned_to_client(self):
         self.provision()
@@ -222,6 +245,20 @@ class BridgeTests(unittest.TestCase):
                 text = chart.read_text(encoding=encoding)
                 self.assertIn(f"EaToken={token}", text)
                 self.assertIn("Other=keep", text)
+
+    def test_install_chart_profile_copies_all_charts_and_syncs_tokens(self):
+        profile = Path(self.temp_dir.name) / "GoldProfile"
+        profile.mkdir()
+        for name in ("chart01.chr", "chart02.chr", "chart03.chr"):
+            (profile / name).write_text("[Experts]\r\nEaToken=old-token\r\n", encoding="utf-8")
+        target = Path(self.temp_dir.name) / "Slot" / "MQL5" / "Profiles" / "Charts" / "Default"
+        with patch.dict(bridge.os.environ, {"JOEMONEY_EA_TOKEN": "profile-token"}):
+            installed = bridge.tm.install_chart_profile(profile / "chart01.chr", target)
+        self.assertEqual(sorted(chart.name for chart in installed), [
+            "chart01.chr", "chart02.chr", "chart03.chr"
+        ])
+        for chart in installed:
+            self.assertIn("EaToken=profile-token", chart.read_text(encoding="utf-8"))
 
     def test_explicit_ea_heartbeat_marks_matching_login_connected(self):
         self.provision()
@@ -326,9 +363,50 @@ class BridgeTests(unittest.TestCase):
         status, command = self.request("/v1/commands/next?login=123456", token=token)
         self.assertEqual(status, 200)
         fields = command.decode().split("|")
-        self.assertEqual(len(fields), 9)
+        self.assertEqual(len(fields), 10)
         self.assertEqual(fields[7], "1")
         self.assertAlmostEqual(float(fields[8]), 0.01)
+        self.assertAlmostEqual(float(fields[9]), 0)
+
+    def test_absolute_tp_price_is_validated_and_sent_to_ea(self):
+        order = bridge.validate_order({
+            "symbol": "XAUUSD",
+            "order_type": "BUY_STOP",
+            "volume": 0.1,
+            "entry_price": 2400,
+            "tp_enabled": True,
+            "tp_price": 2410,
+        })
+        self.assertEqual(order["tp_distance"], 0)
+        self.assertEqual(order["tp_price"], 2410)
+        with self.assertRaises(ValueError):
+            bridge.validate_order({
+                "symbol": "XAUUSD",
+                "order_type": "BUY_STOP",
+                "volume": 0.1,
+                "entry_price": 2400,
+                "tp_enabled": True,
+                "tp_distance": 5,
+                "tp_price": 2410,
+            })
+
+        self.provision()
+        _, response = self.request(
+            "/v1/orders",
+            "POST",
+            BRIDGE_KEY,
+            {"login": "123456", "orders": [dict(order, tp_distance=0)]},
+            {"Idempotency-Key": "absolute-tp-wire-01"},
+        )
+        order_id = json.loads(response)["orders"][0]["id"]
+        status, command = self.request(
+            "/v1/commands/next?login=123456", token="test-ea-token"
+        )
+        self.assertEqual(status, 200)
+        fields = command.decode().split("|")
+        self.assertEqual(fields[0], order_id)
+        self.assertAlmostEqual(float(fields[6]), 0)
+        self.assertAlmostEqual(float(fields[9]), 2410)
 
     def test_ea_posts_prices_and_client_reads_them_back(self):
         self.provision()

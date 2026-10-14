@@ -13,7 +13,7 @@ import {
   Mt5QueuedOrder,
   queueMt5Orders,
   registerMt5Account,
-  getMt5Order,
+  getMt5Orders,
 } from '../services/joemoneyMt5Api';
 
 const ORDER_TYPES: Array<{ value: Mt5OrderType; label: string }> = [
@@ -182,9 +182,9 @@ export const Mt5AccountsScreen: React.FC = () => {
       setOrders(batch.orders);
       for (let attempt = 0; attempt < 20; attempt++) {
         await wait(1000);
-        const updated = await Promise.all(batch.orders.map((order) => getMt5Order(token, order.id)));
-        setOrders(updated);
-        if (updated.every((order) => order.status !== 'queued' && order.status !== 'claimed')) break;
+        const updated = await getMt5Orders(token, batch.orders.map((order) => order.id));
+        setOrders(updated.orders);
+        if (updated.orders.every((order) => order.status !== 'queued' && order.status !== 'claimed')) break;
       }
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : 'Order submission failed.');

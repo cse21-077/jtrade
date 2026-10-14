@@ -22,7 +22,7 @@ import {
   Crosshair,
 } from 'lucide-react';
 import { SymbolSearchSelect } from './SymbolSearchSelect';
-import { getMentorToken, getMt5Order, Mt5OrderRequest, queueMt5Orders, StoredMt5Account } from '../services/joemoneyMt5Api';
+import { getMentorToken, getMt5Orders, Mt5OrderRequest, queueMt5Orders, StoredMt5Account } from '../services/joemoneyMt5Api';
 import { MT5_PRICE_STALE_AFTER_SEC } from '../services/marketPrice';
 import { Mt5Quote } from '../hooks/useMt5Prices';
 
@@ -88,6 +88,8 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
   const [stepDirection, setStepDirection] = useState<'down' | 'up'>('down');
   const [ordersPerLevel, setOrdersPerLevel] = useState<number>(1);
   const [tpEnabled, setTpEnabled] = useState(false);
+  const [tpMode, setTpMode] = useState<'price' | 'distance'>('price');
+  const [tpPrice, setTpPrice] = useState<number>(0);
   const [tpDistance, setTpDistance] = useState<number>(0.5);
   const [slEnabled, setSlEnabled] = useState(false);
   const [slDistance, setSlDistance] = useState<number>(0.5);
@@ -234,7 +236,11 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
       });
       return null;
     }
-    if (tpEnabled && (!Number.isFinite(tpDistance) || tpDistance <= 0)) {
+    if (tpEnabled && tpMode === 'price' && (!Number.isFinite(tpPrice) || tpPrice <= 0)) {
+      onTradeNotice({ success: false, message: 'Enter a shared Take Profit price greater than zero.', trades: [] });
+      return null;
+    }
+    if (tpEnabled && tpMode === 'distance' && (!Number.isFinite(tpDistance) || tpDistance <= 0)) {
       onTradeNotice({ success: false, message: 'TP distance must be greater than zero.', trades: [] });
       return null;
     }
@@ -276,7 +282,8 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
             volume: level.lotSize,
             entry_price: isMarketOrder ? 0 : level.price,
             tp_enabled: tpEnabled,
-            tp_distance: tpEnabled ? tpDistance : 0,
+            tp_distance: tpEnabled && tpMode === 'distance' ? tpDistance : 0,
+            tp_price: tpEnabled && tpMode === 'price' ? tpPrice : 0,
             sl_enabled: slEnabled,
             sl_distance: slEnabled ? slDistance : 0,
           });
@@ -296,13 +303,13 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
       latestOrders = queuedOrders;
 
       for (let attempt = 0; attempt < 20; attempt++) {
-        const updated = await Promise.all(queuedOrders.map((order) =>
-          order.mt5OrderId ? getMt5Order(token, order.mt5OrderId) : Promise.resolve(null)
-        ));
+        const orderIds = queuedOrders.flatMap((order) => order.mt5OrderId ? [order.mt5OrderId] : []);
+        const updated = await getMt5Orders(token, orderIds);
+        const updatedById = new Map(updated.orders.map((order) => [order.id, order]));
 
-        const nextOrders: PlacedOrder[] = queuedOrders.map((order, index) => {
-          const current = updated[index];
-          if (!current || !order.mt5OrderId) return order;
+        const nextOrders: PlacedOrder[] = queuedOrders.map((order) => {
+          const current = order.mt5OrderId ? updatedById.get(order.mt5OrderId) : null;
+          if (!current) return order;
 
           let nextStatus: PlacedOrder['status'];
           switch (current.status) {
@@ -324,7 +331,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
         latestOrders = nextOrders;
         onDeployOrders(nextOrders);
 
-        if (updated.every((order) => order && order.status !== 'queued' && order.status !== 'claimed')) break;
+        if (updated.orders.every((order) => order.status !== 'queued' && order.status !== 'claimed')) break;
         await wait(1000);
       }
     } catch (error: any) {
@@ -725,7 +732,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
           </div>
         </div>
 
-        {/* TP / SL attachments (distances from the broker's live quote) */}
+        {/* TP / SL attachments */}
         <div className="space-y-3 pt-3 border-t border-[#26262b]">
           <div>
             <label className="flex items-center gap-2 text-xs font-bold text-[#fafafa] cursor-pointer">
@@ -735,19 +742,40 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
                 onChange={(e) => setTpEnabled(e.target.checked)}
                 className="h-4 w-4 accent-[#d6f655]"
               />
-              Take Profit <span className="text-[10px] font-medium text-[#52525b]">distance from entry price</span>
+              Take Profit
             </label>
             {tpEnabled && (
-              <input
-                type="number"
-                step="any"
-                min="0"
-                inputMode="decimal"
-                value={tpDistance}
-                onChange={(e) => setTpDistance(parseFloat(e.target.value) || 0)}
-                className="mt-1.5 w-full px-3 py-2 rounded-xl bg-[#1f1f23] border border-[#26262b] font-mono text-sm font-bold text-white focus:ring-2 focus:ring-[#d6f655]"
-              />
+              <>
+                <select
+                  value={tpMode}
+                  onChange={(event) => setTpMode(event.target.value === 'distance' ? 'distance' : 'price')}
+                  className="mt-1.5 w-full rounded-xl border border-[#26262b] bg-[#1f1f23] px-3 py-2 text-xs font-bold text-white"
+                >
+                  <option value="price">Same target price for every order</option>
+                  <option value="distance">Same distance from each entry</option>
+                </select>
+                <input
+                  type="number"
+                  step="any"
+                  min="0"
+                  inputMode="decimal"
+                  value={tpMode === 'price' ? tpPrice || '' : tpDistance}
+                  onChange={(event) => {
+                    const value = parseFloat(event.target.value) || 0;
+                    if (tpMode === 'price') setTpPrice(value);
+                    else setTpDistance(value);
+                  }}
+                  aria-label={tpMode === 'price' ? 'Shared take profit price' : 'Take profit distance'}
+                  placeholder={tpMode === 'price' ? 'Enter shared target price' : 'Enter TP distance'}
+                  className="mt-1.5 w-full rounded-xl border border-[#26262b] bg-[#1f1f23] px-3 py-2 font-mono text-sm font-bold text-white focus:ring-2 focus:ring-[#d6f655]"
+                />
+              </>
             )}
+            <p className="mt-1.5 text-[10px] leading-relaxed text-[#71717a]">
+              {tpMode === 'price'
+                ? 'Every order is assigned this exact TP price individually. It must be above every BUY entry or below every SELL entry and meet broker stop limits.'
+                : `Each order gets its own TP at entry ${direction === 'BUY' ? '+' : '−'} distance. Distance is in price units, not pips.`}
+            </p>
           </div>
           <div>
             <label className="flex items-center gap-2 text-xs font-bold text-[#fafafa] cursor-pointer">
@@ -757,7 +785,7 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
                 onChange={(e) => setSlEnabled(e.target.checked)}
                 className="h-4 w-4 accent-[#d6f655]"
               />
-              Stop Loss <span className="text-[10px] font-medium text-[#52525b]">distance from entry price</span>
+              Stop Loss <span className="text-[10px] font-medium text-[#52525b]">distance from each entry</span>
             </label>
             {slEnabled && (
               <input
@@ -770,6 +798,9 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
                 className="mt-1.5 w-full px-3 py-2 rounded-xl bg-[#1f1f23] border border-[#26262b] font-mono text-sm font-bold text-white focus:ring-2 focus:ring-[#d6f655]"
               />
             )}
+            <p className="mt-1.5 text-[10px] leading-relaxed text-[#71717a]">
+              Each order gets its own SL. BUY: entry − distance; SELL: entry + distance. This is a price difference, not pips.
+            </p>
           </div>
         </div>
       </div>
@@ -846,8 +877,10 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
                 ['Total Volume', `${totalVolume} lots`],
                 ...(!isMarketOrder ? [['Step Spacing', `${stepSpacing} ${stepDirection}`]] : []),
                 ...(ordersPerLevel > 1 ? [['Positions per Price', `${ordersPerLevel}×`]] : []),
-                ...(tpEnabled ? [['Take Profit', `+${tpDistance} from entry`]] : []),
-                ...(slEnabled ? [['Stop Loss', `-${slDistance} from entry`]] : []),
+                ...(tpEnabled ? [['Take Profit', tpMode === 'price'
+                  ? `Shared target ${tpPrice.toFixed(selectedSymbol.decimals)}`
+                  : `${direction === 'BUY' ? '+' : '−'}${tpDistance} from each entry`]] : []),
+                ...(slEnabled ? [['Stop Loss', `${direction === 'BUY' ? '−' : '+'}${slDistance} from each entry`]] : []),
                 ['MT5 Account', mt5Account ? mt5Account.login : 'Not connected'],
               ] as Array<[string, string]>).map(([label, value]) => (
                 <div key={label} className="flex items-center justify-between text-xs gap-3">
@@ -871,8 +904,11 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
 
             <p className="text-[10px] text-[#52525b] leading-relaxed px-1">
               {isMarketOrder
-                ? 'Arming sends market orders to MT5 for immediate execution at the current price.'
-                : 'Arming places pending orders on MT5. They trigger when the market reaches your levels.'}
+                ? 'Arming queues separate market orders. The EA sends each order to MT5 one at a time at the live price.'
+                : 'Arming queues separate pending orders. The EA sends them to MT5 one at a time; they stay pending until market price reaches each level.'}
+              {' '}{tpEnabled && tpMode === 'price'
+                ? 'The same TP target price is attached to each order individually; MT5 does not group these tickets into one TP.'
+                : 'Stop Loss distance is measured from each order’s entry price.'}
             </p>
           </div>
 
@@ -938,6 +974,14 @@ export const GridInputsScreen: React.FC<GridInputsScreenProps> = ({
                 <span className="text-[#52525b]">Total Volume</span>
                 <span className="font-mono font-bold text-[#fafafa]">{totalVolume} lots</span>
               </div>
+              {tpEnabled && tpMode === 'price' && (
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-[#52525b]">Shared TP target</span>
+                  <span className="font-mono font-bold text-[#fafafa]">
+                    {tpPrice.toFixed(selectedSymbol.decimals)}
+                  </span>
+                </div>
+              )}
               {deployResult.rejectionReason && (
                 <p className="text-[10px] text-rose-400">{deployResult.rejectionReason}</p>
               )}

@@ -13,6 +13,7 @@ export interface Mt5OrderRequest {
   entry_price: number;
   tp_enabled: boolean;
   tp_distance: number;
+  tp_price?: number;
   sl_enabled: boolean;
   sl_distance: number;
 }
@@ -182,6 +183,16 @@ export const queueMt5Orders = (token: string, login: string, orders: Mt5OrderReq
 export const getMt5Order = (token: string, orderId: string) =>
   request<Mt5QueuedOrder>(`/v1/orders/${encodeURIComponent(orderId)}`, token);
 
+export const getMt5Orders = (token: string, orderIds: string[]) => {
+  const params = new URLSearchParams({ ids: orderIds.join(',') });
+  return request<{ orders: Mt5QueuedOrder[] }>(`/v1/orders/status?${params.toString()}`, token);
+};
+
+export const cancelMt5QueuedOrder = (token: string, orderId: string) =>
+  request<{ status: 'cancelled'; id: string }>(`/v1/orders/${encodeURIComponent(orderId)}/cancel`, token, {
+    method: 'POST',
+  });
+
 export type Mt5CloseStatus = 'queued' | 'claimed' | 'closed' | 'failed';
 
 export interface Mt5CloseRequest {
@@ -200,9 +211,22 @@ export interface Mt5CloseBatch {
 
 export interface Mt5Position {
   ticket: string;
+  identifier: string;
   symbol: string;
   pos_type: string;
   volume: number;
+  open_price: number;
+  magic: number;
+  updated_at: number;
+}
+
+export interface Mt5PendingOrder {
+  ticket: string;
+  symbol: string;
+  order_type: string;
+  volume: number;
+  price: number;
+  magic: number;
   updated_at: number;
 }
 
@@ -221,7 +245,7 @@ export const getMt5Close = (token: string, closeId: string) =>
   request<Mt5CloseRequest>(`/v1/closes/${encodeURIComponent(closeId)}`, token);
 
 export const getMt5Positions = (token: string, login: string) =>
-  request<{ positions: Mt5Position[] }>(`/v1/positions?login=${encodeURIComponent(login)}`, token);
+  request<{ positions: Mt5Position[]; pending_orders: Mt5PendingOrder[] }>(`/v1/positions?login=${encodeURIComponent(login)}`, token);
 
 export const getMt5Prices = (token: string, opts?: { login?: string; symbols?: string[] }) => {
   const params = new URLSearchParams();

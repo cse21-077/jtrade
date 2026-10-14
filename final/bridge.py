@@ -48,6 +48,12 @@ def connect_db(path: Path | None = None) -> sqlite3.Connection:
     path = path or DB_PATH
     connection = sqlite3.connect(path, timeout=10)
     connection.row_factory = sqlite3.Row
+    return connection
+
+
+def _initialize_db(path: Path | None = None) -> sqlite3.Connection:
+    path = path or DB_PATH
+    connection = connect_db(path)
     connection.execute("PRAGMA journal_mode=WAL")
     connection.execute(
         """CREATE TABLE IF NOT EXISTS orders (
@@ -59,6 +65,7 @@ def connect_db(path: Path | None = None) -> sqlite3.Connection:
             entry_price REAL NOT NULL,
             tp_enabled INTEGER NOT NULL,
             tp_distance REAL NOT NULL,
+            tp_price REAL NOT NULL DEFAULT 0,
             status TEXT NOT NULL,
             ticket TEXT,
             result_message TEXT,
@@ -73,6 +80,8 @@ def connect_db(path: Path | None = None) -> sqlite3.Connection:
         connection.execute("ALTER TABLE orders ADD COLUMN sl_enabled INTEGER NOT NULL DEFAULT 0")
     if "sl_distance" not in order_columns:
         connection.execute("ALTER TABLE orders ADD COLUMN sl_distance REAL NOT NULL DEFAULT 0")
+    if "tp_price" not in order_columns:
+        connection.execute("ALTER TABLE orders ADD COLUMN tp_price REAL NOT NULL DEFAULT 0")
     connection.execute(
         """CREATE TABLE IF NOT EXISTS batches (
             idempotency_key TEXT PRIMARY KEY,
@@ -135,9 +144,32 @@ def connect_db(path: Path | None = None) -> sqlite3.Connection:
         """CREATE TABLE IF NOT EXISTS positions (
             login TEXT NOT NULL,
             ticket TEXT NOT NULL,
+            identifier TEXT NOT NULL DEFAULT '',
             symbol TEXT NOT NULL,
             pos_type TEXT NOT NULL,
             volume REAL NOT NULL,
+            open_price REAL NOT NULL DEFAULT 0,
+            magic INTEGER NOT NULL DEFAULT 0,
+            updated_at REAL NOT NULL,
+            PRIMARY KEY(login, ticket)
+        )"""
+    )
+    position_columns = {row[1] for row in connection.execute("PRAGMA table_info(positions)")}
+    if "identifier" not in position_columns:
+        connection.execute("ALTER TABLE positions ADD COLUMN identifier TEXT NOT NULL DEFAULT ''")
+    if "open_price" not in position_columns:
+        connection.execute("ALTER TABLE positions ADD COLUMN open_price REAL NOT NULL DEFAULT 0")
+    if "magic" not in position_columns:
+        connection.execute("ALTER TABLE positions ADD COLUMN magic INTEGER NOT NULL DEFAULT 0")
+    connection.execute(
+        """CREATE TABLE IF NOT EXISTS pending_orders (
+            login TEXT NOT NULL,
+            ticket TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            order_type TEXT NOT NULL,
+            volume REAL NOT NULL,
+            price REAL NOT NULL,
+            magic INTEGER NOT NULL DEFAULT 0,
             updated_at REAL NOT NULL,
             PRIMARY KEY(login, ticket)
         )"""
@@ -154,6 +186,14 @@ def connect_db(path: Path | None = None) -> sqlite3.Connection:
         )"""
     )
     return connection
+
+
+def initialize_db(path: Path | None = None) -> None:
+    connection = _initialize_db(path)
+    try:
+        connection.commit()
+    finally:
+        connection.close()
 
 
 @contextmanager
@@ -211,11 +251,12 @@ def validate_order(item: object) -> dict:
         volume = float(item.get("volume"))
         entry_price = float(item.get("entry_price", 0))
         tp_distance = float(item.get("tp_distance", 0))
+        tp_price = float(item.get("tp_price", 0))
         sl_distance = float(item.get("sl_distance", 0))
     except (TypeError, ValueError):
-        raise ValueError("volume, entry_price, tp_distance, and sl_distance must be numbers.") from None
-    if not all(math.isfinite(value) for value in (volume, entry_price, tp_distance, sl_distance)):
-        raise ValueError("volume, entry_price, tp_distance, and sl_distance must be finite numbers.")
+        raise ValueError("volume, entry_price, TP, and SL values must be numbers.") from None
+    if not all(math.isfinite(value) for value in (volume, entry_price, tp_distance, tp_price, sl_distance)):
+        raise ValueError("volume, entry_price, TP, and SL values must be finite numbers.")
     if not 0 < volume <= 100:
         raise ValueError("volume must be greater than 0 and no more than 100 lots.")
     market = order_type.startswith("MARKET_")
@@ -226,8 +267,12 @@ def validate_order(item: object) -> dict:
     tp_enabled = item.get("tp_enabled", False)
     if not isinstance(tp_enabled, bool):
         raise ValueError("tp_enabled must be a boolean.")
-    if tp_distance < 0 or (tp_enabled and tp_distance <= 0):
-        raise ValueError("Enabled TP requires tp_distance greater than zero.")
+    if tp_distance < 0 or tp_price < 0:
+        raise ValueError("TP distance and price cannot be negative.")
+    if tp_enabled and ((tp_distance > 0) == (tp_price > 0)):
+        raise ValueError("Enabled TP requires exactly one of tp_distance or tp_price.")
+    if not tp_enabled and (tp_distance > 0 or tp_price > 0):
+        raise ValueError("Disabled TP cannot include a TP distance or price.")
     sl_enabled = item.get("sl_enabled", False)
     if not isinstance(sl_enabled, bool):
         raise ValueError("sl_enabled must be a boolean.")
@@ -240,6 +285,7 @@ def validate_order(item: object) -> dict:
         "entry_price": entry_price,
         "tp_enabled": tp_enabled,
         "tp_distance": tp_distance,
+        "tp_price": tp_price,
         "sl_enabled": sl_enabled,
         "sl_distance": sl_distance,
     }
@@ -252,8 +298,9 @@ def validate_ticks(payload: object) -> tuple[str, list[dict]]:
     if not LOGIN_RE.fullmatch(login):
         raise ValueError("login must be 4-20 digits.")
     ticks = payload.get("ticks")
-    if not isinstance(ticks, list) or not 1 <= len(ticks) <= MAX_TICK_BATCH_SIZE:
-        raise ValueError(f"ticks must contain 1-{MAX_TICK_BATCH_SIZE} ticks.")
+    minimum_ticks = 0 if "positions" in payload or "pending_orders" in payload else 1
+    if not isinstance(ticks, list) or not minimum_ticks <= len(ticks) <= MAX_TICK_BATCH_SIZE:
+        raise ValueError(f"ticks must contain {minimum_ticks}-{MAX_TICK_BATCH_SIZE} ticks.")
     validated = []
     for tick in ticks:
         if not isinstance(tick, dict):
@@ -294,21 +341,64 @@ def validate_positions(payload: object) -> tuple[bool, list[dict]]:
         if not isinstance(position, dict):
             raise ValueError("Each position must be an object.")
         ticket = str(position.get("ticket", "")).strip()
+        identifier = str(position.get("identifier", ticket)).strip()
         symbol = position.get("symbol")
         pos_type = str(position.get("type", "")).strip().lower()
         if not ticket.isdigit() or not 1 <= len(ticket) <= 20:
             raise ValueError("Position ticket must be numeric.")
+        if identifier and (not identifier.isdigit() or len(identifier) > 20):
+            raise ValueError("Position identifier must be numeric.")
         if not isinstance(symbol, str) or not SYMBOL_RE.fullmatch(symbol) or "|" in symbol:
             raise ValueError("Position symbol is invalid.")
         if pos_type not in {"buy", "sell"}:
             raise ValueError("Position type must be buy or sell.")
         try:
             volume = float(position.get("volume"))
+            open_price = float(position.get("open_price", 0))
         except (TypeError, ValueError):
-            raise ValueError("Position volume must be a number.") from None
-        if not math.isfinite(volume) or volume <= 0:
-            raise ValueError("Position volume must be a positive finite number.")
-        validated.append({"ticket": ticket, "symbol": symbol, "type": pos_type, "volume": volume})
+            raise ValueError("Position volume and open_price must be numbers.") from None
+        if not math.isfinite(volume) or volume <= 0 or not math.isfinite(open_price) or open_price < 0:
+            raise ValueError("Position volume must be positive and open_price must be nonnegative finite numbers.")
+        try:
+            magic = int(position.get("magic", 0))
+        except (TypeError, ValueError):
+            raise ValueError("Position magic must be an integer.") from None
+        validated.append({"ticket": ticket, "identifier": identifier, "symbol": symbol,
+                          "type": pos_type, "volume": volume, "open_price": open_price, "magic": magic})
+    return True, validated
+
+
+def validate_pending_orders(payload: object) -> tuple[bool, list[dict]]:
+    """Validate an optional pending-order snapshot; presence replaces stored rows."""
+    if not isinstance(payload, dict) or "pending_orders" not in payload:
+        return False, []
+    raw = payload["pending_orders"]
+    if not isinstance(raw, list) or len(raw) > MAX_TICK_BATCH_SIZE:
+        raise ValueError(f"pending_orders must contain 0-{MAX_TICK_BATCH_SIZE} entries.")
+    validated = []
+    supported_types = {"buy_limit", "sell_limit", "buy_stop", "sell_stop", "buy_stop_limit", "sell_stop_limit"}
+    for order in raw:
+        if not isinstance(order, dict):
+            raise ValueError("Each pending order must be an object.")
+        ticket = str(order.get("ticket", "")).strip()
+        symbol = order.get("symbol")
+        order_type = str(order.get("type", "")).strip().lower()
+        try:
+            volume = float(order.get("volume"))
+            price = float(order.get("price"))
+            magic = int(order.get("magic", 0))
+        except (TypeError, ValueError):
+            raise ValueError("Pending order ticket, volume, price, or magic is invalid.") from None
+        if not ticket.isdigit() or not 1 <= len(ticket) <= 20:
+            raise ValueError("Pending order ticket must be numeric.")
+        if not isinstance(symbol, str) or not SYMBOL_RE.fullmatch(symbol) or "|" in symbol:
+            raise ValueError("Pending order symbol is invalid.")
+        if order_type not in supported_types:
+            raise ValueError("Pending order type is invalid.")
+        if not math.isfinite(volume) or volume <= 0 or not math.isfinite(price) or price <= 0:
+            raise ValueError("Pending order volume and price must be positive finite numbers.")
+        validated.append({"ticket": ticket, "symbol": symbol, "type": order_type,
+                          "volume": volume, "price": price, "magic": magic})
     return True, validated
 
 
@@ -468,6 +558,29 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 for row in rows
             ]
             return self._send(200, {"prices": prices, "now": now})
+        if parsed.path == "/v1/orders/status":
+            if not client_authed(self.headers.get("Authorization", "")):
+                return self._send(401, {"error": "Unauthorized"})
+            ids_param = parse_qs(parsed.query).get("ids", [""])[0]
+            order_ids = ids_param.split(",") if ids_param else []
+            if not order_ids or len(order_ids) > MAX_BATCH_SIZE:
+                return self._send(400, {"error": f"Provide between 1 and {MAX_BATCH_SIZE} order IDs."})
+            if any(not re.fullmatch(r"[0-9a-f-]{1,64}", order_id) for order_id in order_ids):
+                return self._send(400, {"error": "Invalid order ID."})
+            if len(set(order_ids)) != len(order_ids):
+                return self._send(400, {"error": "Order IDs must be unique."})
+            placeholders = ",".join("?" for _ in order_ids)
+            with db_session() as db:
+                rows = db.execute(
+                    "SELECT id,status,ticket,result_message,created_at,updated_at "
+                    f"FROM orders WHERE id IN ({placeholders})",
+                    order_ids,
+                ).fetchall()
+            orders_by_id = {row["id"]: dict(row) for row in rows}
+            missing_ids = [order_id for order_id in order_ids if order_id not in orders_by_id]
+            if missing_ids:
+                return self._send(404, {"error": "Unknown order ID(s).", "ids": missing_ids})
+            return self._send(200, {"orders": [orders_by_id[order_id] for order_id in order_ids]})
         match = re.fullmatch(r"/v1/orders/([0-9a-f-]+)", parsed.path)
         if match:
             if not client_authed(self.headers.get("Authorization", "")):
@@ -504,7 +617,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 row["id"], row["symbol"], row["order_type"], f'{row["volume"]:.8f}',
                 f'{row["entry_price"]:.10f}', "1" if row["tp_enabled"] else "0",
                 f'{row["tp_distance"]:.10f}', "1" if row["sl_enabled"] else "0",
-                f'{row["sl_distance"]:.10f}',
+                f'{row["sl_distance"]:.10f}', f'{row["tp_price"]:.10f}',
             ]
             return self._send(200, "|".join(fields), "text/plain; charset=utf-8")
         if parsed.path == "/v1/closes/next":
@@ -536,9 +649,16 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": "login must be 4-20 digits."})
             with db_session() as db:
                 rows = db.execute(
-                    "SELECT ticket,symbol,pos_type,volume,updated_at FROM positions WHERE login=?", (login,)
+                    "SELECT ticket,identifier,symbol,pos_type,volume,open_price,magic,updated_at FROM positions WHERE login=?", (login,)
                 ).fetchall()
-            return self._send(200, {"positions": [dict(row) for row in rows]})
+                pending_rows = db.execute(
+                    "SELECT ticket,symbol,order_type,volume,price,magic,updated_at FROM pending_orders WHERE login=?",
+                    (login,),
+                ).fetchall()
+            return self._send(200, {
+                "positions": [dict(row) for row in rows],
+                "pending_orders": [dict(row) for row in pending_rows],
+            })
         match = re.fullmatch(r"/v1/closes/([0-9a-f-]+)", parsed.path)
         if match:
             if not client_authed(self.headers.get("Authorization", "")):
@@ -674,12 +794,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     cached["replayed"] = True
                     return self._send(200, cached)
                 db.executemany(
-                    "INSERT INTO orders(id,login,symbol,order_type,volume,entry_price,tp_enabled,tp_distance,sl_enabled,sl_distance,status,created_at,updated_at) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,'queued',?,?)",
+                    "INSERT INTO orders(id,login,symbol,order_type,volume,entry_price,tp_enabled,tp_distance,sl_enabled,sl_distance,tp_price,status,created_at,updated_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,'queued',?,?)",
                     [
                         (record["id"], login, order["symbol"], order["order_type"], order["volume"],
                          order["entry_price"], int(order["tp_enabled"]), order["tp_distance"],
-                         int(order["sl_enabled"]), order["sl_distance"], now, now)
+                         int(order["sl_enabled"]), order["sl_distance"], order["tp_price"], now, now)
                         for record, order in zip(created, validated)
                     ],
                 )
@@ -690,6 +810,22 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if login not in tm.running_logins():
                 threading.Thread(target=tm.ensure_terminal, args=(dict(account),), daemon=True).start()
             return self._send(202, response_body)
+        match = re.fullmatch(r"/v1/orders/([0-9a-f-]+)/cancel", parsed.path)
+        if match:
+            if not client_authed(self.headers.get("Authorization", "")):
+                return self._send(401, {"error": "Unauthorized"})
+            with db_session() as db:
+                row = db.execute("SELECT status FROM orders WHERE id=?", (match.group(1),)).fetchone()
+                if not row:
+                    return self._send(404, {"error": "Unknown order."})
+                if row["status"] != "queued":
+                    return self._send(409, {"error": "Order is no longer queued; cancel it at MT5 if it was accepted."})
+                db.execute(
+                    "UPDATE orders SET status='cancelled',result_message='Cancelled before EA claim',updated_at=? "
+                    "WHERE id=? AND status='queued'",
+                    (time.time(), match.group(1)),
+                )
+            return self._send(200, {"status": "cancelled", "id": match.group(1)})
         if parsed.path == "/v1/positions/close":
             if not client_authed(self.headers.get("Authorization", "")):
                 return self._send(401, {"error": "Unauthorized"})
@@ -798,6 +934,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 payload = self._read_json()
                 login, ticks = validate_ticks(payload)
                 has_positions, positions = validate_positions(payload)
+                has_pending_orders, pending_orders = validate_pending_orders(payload)
             except (json.JSONDecodeError, ValueError, AttributeError) as error:
                 return self._send(400, {"error": str(error)})
             with db_session() as db:
@@ -818,10 +955,21 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     db.execute("DELETE FROM positions WHERE login=?", (login,))
                 if positions:
                     db.executemany(
-                        "INSERT INTO positions(login,ticket,symbol,pos_type,volume,updated_at) VALUES(?,?,?,?,?,?)",
-                        [(login, pos["ticket"], pos["symbol"], pos["type"], pos["volume"], now) for pos in positions],
+                                                "INSERT INTO positions(login,ticket,identifier,symbol,pos_type,volume,open_price,magic,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                        [(login, pos["ticket"], pos["identifier"], pos["symbol"], pos["type"],
+                                                    pos["volume"], pos["open_price"], pos["magic"], now) for pos in positions],
                     )
-            return self._send(200, {"status": "recorded", "count": len(ticks), "positions": len(positions)})
+                if has_pending_orders:
+                    db.execute("DELETE FROM pending_orders WHERE login=?", (login,))
+                if pending_orders:
+                    db.executemany(
+                        "INSERT INTO pending_orders(login,ticket,symbol,order_type,volume,price,magic,updated_at) "
+                        "VALUES(?,?,?,?,?,?,?,?)",
+                        [(login, order["ticket"], order["symbol"], order["type"], order["volume"],
+                          order["price"], order["magic"], now) for order in pending_orders],
+                    )
+            return self._send(200, {"status": "recorded", "count": len(ticks),
+                                    "positions": len(positions), "pending_orders": len(pending_orders)})
         if parsed.path == "/v1/terminal/status":
             if not ea_authed(self.headers.get("Authorization", "")):
                 return self._send(401, {"error": "Unauthorized"})
@@ -854,8 +1002,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
 def main() -> None:
     if len(BRIDGE_KEY) < 32:
         raise SystemExit("Set JOEMONEY_BRIDGE_KEY (32+ characters) before starting.")
-    with db_session():
-        pass
+    initialize_db()
     if os.environ.get("JOEMONEY_RECONCILE_ON_BOOT", "1") == "1":
         reconcile_on_boot()
     host = os.environ.get("JOEMONEY_HOST", "127.0.0.1")

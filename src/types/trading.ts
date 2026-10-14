@@ -62,6 +62,7 @@ export interface PlacedOrder {
   filledAt?: number;
   derivContractId?: string | number;
   mt5Ticket?: string | number;
+  mt5PositionIdentifier?: string;
   mt5OrderId?: string;
   mt5ResultMessage?: string;
 }

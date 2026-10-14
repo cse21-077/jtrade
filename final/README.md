@@ -14,7 +14,7 @@ the VPS, so clients never authenticate by hand.
 - Many MT5 accounts, each in its own portable terminal under `C:\MT5Terminals\JoeMoney\SlotNNN`.
 - One shared bridge key (`JOEMONEY_BRIDGE_KEY`) protects every endpoint; it is baked into the PWA build at build time.
 - Market BUY/SELL and broker-held BUY_LIMIT, SELL_LIMIT, BUY_STOP, SELL_STOP orders; one order object per position, up to 100 per batch, idempotent submission via `Idempotency-Key`.
-- Optional spot-based TP from the broker quote at execution time (BUY: ask + distance; SELL: bid - distance).
+- Optional per-order TP, either a shared absolute target price for the whole batch or a distance from each order's entry.
 - Terminal supervision: terminals are launched on registration, re-launched when orders arrive for a stopped terminal, and reconciled on bridge start (pre-warm on boot).
 - Optional `-RefreshTerminals` startup mode closes only portable MT5 processes under the managed JoeMoney slots folder, then refreshes and relaunches active accounts from the master EA/chart files.
 - Explicit per-account connection status from the EA heartbeat — bridge or EA polling alone does not mean the broker connection is up.
@@ -79,25 +79,29 @@ template before running the refresh.
    `BridgeUrl` to `http://127.0.0.1:8765` and `EaToken` to the current bridge key.
    Enable **Algo Trading**. In MT5 Options > Expert Advisors, allow WebRequest to
    `http://127.0.0.1:8765`.
-4. Save the profile with **File > Profiles > Save As**, named `JoeMoney`. Close the
-   master MT5, then copy:
+4. To run multiple order pumps for the same symbol, open 2-4 charts for the exact
+   broker Gold symbol (for example, `XAUUSD` or the broker's suffixed variant) in
+   this profile. Attach `JoeMoneyBridgeEA` to every chart with the same bridge
+   URL/token, and make sure Algo Trading is enabled. Save the profile with
+   **File > Profiles > Save As**, named `JoeMoney`. Close the master MT5, then use:
 
    ```text
    C:\MT5Terminals\JoeMoneyMaster\MQL5\Profiles\Charts\JoeMoney\chart01.chr
    ```
 
-   to:
+   Set `JOEMONEY_CHART_TEMPLATE` to that `chart01.chr` path. The bridge copies
+   every `.chr` chart file alongside it from the `JoeMoney` profile into each
+   account slot's `Charts\Default` folder, and synchronizes the EA token in each
+   chart. Do not rename the files. Keep the master closed during normal operation
+   so it does not run extra EA instances.
 
-   ```text
-   C:\MT5Terminals\JoeMoneyMaster\MQL5\Profiles\Charts\Default\chart01.chr
-   ```
-
-   The MT5 profile stores its chart as `chart01.chr` inside the `JoeMoney` profile
-   folder. Do not rename the file. The bridge reads it from
-   `Charts\JoeMoney\chart01.chr` and copies it into each account slot's
-   `Charts\Default\chart01.chr` before launching that portable terminal. This
-   carries the EA/chart inputs into new slots. Keep the master closed during
-   normal operation so it does not run an extra EA instance.
+   All charts share the same account and order queue. The bridge atomically assigns
+   each queued order to only one EA, so multiple charts can drain different orders
+   concurrently without intentionally duplicating a claim. Start with 2-4 charts;
+   this can improve queue throughput but does not make MT5 submit a bulk trade or
+   guarantee broker execution speed. Every order still gets its own `OrderSend`,
+   and the account's exposure and risk are shared across all charts. Multiple
+   charts reporting the same symbol also produce extra quote/heartbeat updates.
 
 ### 3. DNS, Caddy, and firewall
 
@@ -187,8 +191,17 @@ enter the account (MT5 login, password, server) → **Connect**. If the bridge k
 not baked into the build, paste it once when asked.
 The VPS launches and logs in a terminal for it; the account list shows green when
 the terminal is up and the EA heartbeat is live. Select an account, build the order
-ladder, and queue. The PWA polls each order until the EA acknowledges it. A queued
-response means "accepted by the bridge", not "executed" — confirm trades in MT5.
+ladder, and review it. Arming queues individual orders; the EA sends them to MT5
+one at a time (MT5 has no bulk `OrderSend`). Pending orders then wait in MT5 for
+their trigger prices. If TP/SL is enabled, each order receives its own TP/SL
+distance from that order's entry price, in the symbol's price units (not pips).
+The PWA checks all order statuses in one batch request. Take Profit can use one
+shared absolute target price (the EA assigns that same price to each order's TP
+field) or a distance from each entry; the broker still sees separate tickets, not
+one grouped TP. A shared price must be on the correct side of every entry and meet
+the broker's stop-distance rule, otherwise MT5 can reject individual orders. The
+PWA's status summary reports which orders MT5 accepted. A queued response means
+"accepted by the bridge", not "placed or filled" — confirm trades in MT5.
 
 ## Protocol
 
@@ -197,7 +210,9 @@ response means "accepted by the bridge", not "executed" — confirm trades in MT
 - `POST /v1/accounts/{login}/deactivate`: stops trading for that account.
 - `POST /v1/orders`: `{login, orders:[...]}` with `Idempotency-Key`.
 - `GET /v1/orders/{id}`: order status.
-- `GET /v1/commands/next?login=...` (EA): atomically claims the oldest queued command for that login; payload is the 7-field pipe-delimited line `id|symbol|order_type|volume|entry_price|tp_enabled|tp_distance`.
+- `GET /v1/orders/status?ids={id1},{id2},...`: up to 100 order statuses in one
+  response, in the requested order.
+- `GET /v1/commands/next?login=...` (EA): atomically claims the oldest queued command for that login; payload is the 10-field pipe-delimited line `id|symbol|order_type|volume|entry_price|tp_enabled|tp_distance|sl_enabled|sl_distance|tp_price`. `tp_price=0` uses `tp_distance`; a positive `tp_price` is an absolute shared target.
 - `POST /v1/commands/{id}/result` (EA): `placed`/`rejected` acknowledgement with ticket and message.
 - `POST /v1/terminal/status` (EA): per-login heartbeat. `connected=true` means the terminal is online **and** the account login succeeded; a failed login never produces an authorized heartbeat for the registered login (it is refused), so the PWA's "pending" state flips to "connected" only after a real MT5 login. `GET /v1/status?login=` (client) reads it.
 - `POST /v1/prices` (EA): `{login, ticks:[{symbol,bid,ask}, ...]}` (1-200). The EA reports live ticks for its `ReportSymbols` input every `ReportSeconds` (default 3s); unknown logins are refused.

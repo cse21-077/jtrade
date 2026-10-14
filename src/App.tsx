@@ -9,7 +9,7 @@ import { BottomNavBar, AppTab } from './components/BottomNavBar';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { Mt5AccountsScreen } from './components/Mt5AccountsScreen';
 import { derivService } from './services/derivWs';
-import { clearStoredMt5Account, closeMt5Positions, deactivateMt5Account, getMentorToken, getMt5Close, getMt5Positions, getStoredMt5Account, StoredMt5Account } from './services/joemoneyMt5Api';
+import { cancelMt5QueuedOrder, clearStoredMt5Account, closeMt5Positions, deactivateMt5Account, getMentorToken, getMt5Close, getMt5Positions, getStoredMt5Account, StoredMt5Account } from './services/joemoneyMt5Api';
 import { getMt5MidPrice } from './services/marketPrice';
 import { getMt5Quote, useMt5Prices } from './hooks/useMt5Prices';
 import { DerivAccount, MarketSymbol, PlacedOrder, TradeNotice } from './types/trading';
@@ -66,27 +66,91 @@ export default function App() {
     return unsub;
   }, []);
 
-  // Fill detection: the EA snapshots open positions in its price report, so a
-  // pending limit/stop order whose ticket appears as a position has filled and
-  // becomes closable from the Orders page.
+  // Broker snapshots restore MT5 positions and pending orders after reload and
+  // reconcile local submit rows against the terminal's current state.
   useEffect(() => {
     if (!mt5Account) return;
+    let cancelled = false;
     const timer = window.setInterval(async () => {
       try {
-        const { positions } = await getMt5Positions(getMentorToken(), mt5Account.login);
-        if (positions.length === 0) return;
-        const tickets = new Set(positions.map((position) => position.ticket));
-        setOrders((prev) => prev.map((order) =>
-          (order.status === 'PENDING' || order.status === 'CLAIMED') &&
-          order.mt5Ticket && tickets.has(String(order.mt5Ticket))
-            ? { ...order, status: 'FILLED', filledAt: order.filledAt ?? Date.now() }
-            : order
-        ));
+        const { positions, pending_orders: pendingOrders } = await getMt5Positions(getMentorToken(), mt5Account.login);
+        if (cancelled) return;
+        setOrders((previous) => {
+          const snapshots: PlacedOrder[] = [
+            ...positions.map((position) => ({
+              id: `MT5-POS-${position.ticket}`,
+              levelIndex: 0,
+              subIndex: 1,
+              symbol: position.symbol,
+              direction: position.pos_type.toUpperCase() === 'SELL' ? 'SELL' as const : 'BUY' as const,
+              orderType: 'MARKET_GRID' as const,
+              mt5OrderType: position.pos_type.toUpperCase() === 'SELL' ? 'MARKET_SELL' : 'MARKET_BUY',
+              price: position.open_price,
+              lotSize: position.volume,
+              status: 'FILLED' as const,
+              createdAt: position.updated_at * 1000,
+              mt5Ticket: position.ticket,
+              mt5PositionIdentifier: position.identifier,
+            })),
+            ...pendingOrders.map((pendingOrder) => ({
+              id: `MT5-PENDING-${pendingOrder.ticket}`,
+              levelIndex: 0,
+              subIndex: 1,
+              symbol: pendingOrder.symbol,
+              direction: pendingOrder.order_type.startsWith('sell') ? 'SELL' as const : 'BUY' as const,
+              orderType: pendingOrder.order_type.includes('limit') ? 'LIMIT' as const : 'STOP' as const,
+              mt5OrderType: pendingOrder.order_type.toUpperCase(),
+              price: pendingOrder.price,
+              lotSize: pendingOrder.volume,
+              status: 'PENDING' as const,
+              createdAt: pendingOrder.updated_at * 1000,
+              mt5Ticket: pendingOrder.ticket,
+            })),
+          ];
+          const matchedSnapshots = new Set<number>();
+          const localRows: PlacedOrder[] = [];
+          for (const order of previous) {
+            if (order.derivContractId) {
+              localRows.push(order);
+              continue;
+            }
+            let matchIndex = -1;
+            if (order.mt5Ticket) {
+              matchIndex = snapshots.findIndex((snapshot, index) =>
+                !matchedSnapshots.has(index) && (
+                  String(snapshot.mt5Ticket) === String(order.mt5Ticket) ||
+                  snapshot.mt5PositionIdentifier === String(order.mt5Ticket)
+                )
+              );
+            }
+            if (matchIndex < 0 && order.mt5OrderType?.startsWith('MARKET_')) {
+              const candidates = snapshots.map((snapshot, index) => ({ snapshot, index })).filter(({ snapshot, index }) =>
+                !matchedSnapshots.has(index) && snapshot.status === 'FILLED' &&
+                snapshot.symbol === order.symbol && snapshot.direction === order.direction &&
+                Math.abs(snapshot.lotSize - order.lotSize) < 1e-8
+              );
+              if (candidates.length === 1) matchIndex = candidates[0].index;
+            }
+            if (matchIndex >= 0) {
+              matchedSnapshots.add(matchIndex);
+              localRows.push({ ...order, ...snapshots[matchIndex], id: order.id, mt5OrderId: order.mt5OrderId });
+            } else if (order.status === 'QUEUED' || order.status === 'CLAIMED' || order.status === 'FAILED') {
+              localRows.push(order);
+            }
+          }
+          snapshots.forEach((snapshot, index) => {
+            if (!matchedSnapshots.has(index)) localRows.push(snapshot);
+          });
+          return localRows;
+        });
       } catch {
         // transient poll failure; the next tick retries
       }
     }, 4000);
-    return () => window.clearInterval(timer);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [mt5Account]);
 
   const handleSplashConnected = (acc: DerivAccount) => {

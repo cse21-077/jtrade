@@ -190,6 +190,21 @@ def sync_chart_token(chart_path: Path) -> None:
             pass
 
 
+def install_chart_profile(chart_template: str | Path, target_dir: Path) -> list[Path]:
+    source_chart = Path(chart_template)
+    source_charts = sorted(source_chart.parent.glob("*.chr"))
+    if source_chart not in source_charts:
+        source_charts.append(source_chart)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    installed = []
+    for chart in source_charts:
+        target_chart = target_dir / chart.name
+        shutil.copy2(chart, target_chart)
+        sync_chart_token(target_chart)
+        installed.append(target_chart)
+    return installed
+
+
 def ensure_terminal(account: dict) -> tuple[bool, str]:
     """Launch the terminal for an account row if it is not already running.
 
@@ -224,10 +239,7 @@ def ensure_terminal(account: dict) -> tuple[bool, str]:
             warnings.append("EA source not configured; compile and copy the EA manually")
         if CHART_TEMPLATE and Path(CHART_TEMPLATE).exists():
             charts = folder / "MQL5" / "Profiles" / "Charts" / "Default"
-            charts.mkdir(parents=True, exist_ok=True)
-            target_chart = charts / Path(CHART_TEMPLATE).name
-            shutil.copy2(CHART_TEMPLATE, target_chart)
-            sync_chart_token(target_chart)
+            install_chart_profile(CHART_TEMPLATE, charts)
         else:
             warnings.append("chart template not configured; attach the JoeMoney EA to a chart manually")
         subprocess.Popen([str(exe), "/portable", f"/config:{folder / 'startup.ini'}"], cwd=str(folder), close_fds=True)
