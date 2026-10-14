@@ -79,10 +79,12 @@ template before running the refresh.
    `BridgeUrl` to `http://127.0.0.1:8765` and `EaToken` to the current bridge key.
    Enable **Algo Trading**. In MT5 Options > Expert Advisors, allow WebRequest to
    `http://127.0.0.1:8765`.
-4. To run multiple order pumps for the same symbol, open 2-4 charts for the exact
-   broker Gold symbol (for example, `XAUUSD` or the broker's suffixed variant) in
-   this profile. Attach `JoeMoneyBridgeEA` to every chart with the same bridge
-   URL/token, and make sure Algo Trading is enabled. Save the profile with
+4. One chart with `JoeMoneyBridgeEA` is enough to drain and place the entire order
+   queue sequentially. Multiple charts are optional and only add parallel pumps.
+   For that, open 2-4 charts for the exact broker Gold symbol (for example,
+   `XAUUSD` or the broker's suffixed variant) in this profile. Attach
+   `JoeMoneyBridgeEA` to every chart with the same bridge URL/token, and make sure
+   Algo Trading is enabled. Save the profile with
    **File > Profiles > Save As**, named `JoeMoney`. Close the master MT5, then use:
 
    ```text
@@ -102,6 +104,12 @@ template before running the refresh.
    guarantee broker execution speed. Every order still gets its own `OrderSend`,
    and the account's exposure and risk are shared across all charts. Multiple
    charts reporting the same symbol also produce extra quote/heartbeat updates.
+   The bridge only installs this chart profile when it launches a terminal. A
+   terminal that is already running is left untouched during normal reconciliation;
+   close/relaunch that account terminal (or use the documented refresh procedure)
+   after changing the profile. `JOEMONEY_CHART_TEMPLATE` must point to the saved
+   profile's `chart01.chr`; saving a profile in the master alone does not select it
+   for account slots.
 
 ### 3. DNS, Caddy, and firewall
 

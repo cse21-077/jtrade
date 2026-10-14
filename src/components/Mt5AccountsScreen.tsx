@@ -106,7 +106,15 @@ export const Mt5AccountsScreen: React.FC = () => {
         password: newPassword,
         server: newServer.trim(),
       });
-      setNotice(`Account ${result.login} registered. ${result.launched ? 'Terminal launched.' : result.message}`);
+      if (!result.launched) {
+        throw new Error(
+          `Account ${result.login} was saved on the bridge, but MT5 could not be started: ${result.message || 'No launch details were returned.'}`
+        );
+      }
+      const launchWarning = result.message && result.message !== 'launched' && result.message !== 'already running'
+        ? ` Setup note: ${result.message}`
+        : '';
+      setNotice(`Account ${result.login} saved. MT5 process ${result.message === 'already running' ? 'is already running' : 'was started'}; broker login and EA heartbeat are still pending confirmation.${launchWarning}`);
       setNewLogin('');
       setNewPassword('');
       setNewServer('');

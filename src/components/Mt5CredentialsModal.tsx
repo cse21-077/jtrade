@@ -58,11 +58,16 @@ export const Mt5CredentialsModal: React.FC<Mt5CredentialsModalProps> = ({ onClos
 
     setIsConnecting(true);
     try {
-      await registerMt5Account(mentorToken, {
+      const result = await registerMt5Account(mentorToken, {
         login: login.trim(),
         password,
         server,
       });
+      if (!result.launched) {
+        throw new Error(
+          `The account was saved on the bridge, but MT5 could not be started: ${result.message || 'No launch details were returned.'}`
+        );
+      }
       const account: StoredMt5Account = { login: login.trim(), server };
       storeMt5Account(account);
       onConnected(account);
@@ -86,7 +91,7 @@ export const Mt5CredentialsModal: React.FC<Mt5CredentialsModalProps> = ({ onClos
           <div>
             <h2 id="mt5-credentials-title" className="text-base font-black tracking-tight">MT5 Credentials</h2>
             <p className="mt-1 text-[11px] leading-relaxed text-neutral-400">
-              Your Deriv MT5 account runs on the JoeMoney VPS. We start a terminal, log it in, and connect it to your dashboard.
+              The VPS attempts to start MT5 with these credentials. The dashboard shows when MT5 login and the EA heartbeat are confirmed; a successful request alone does not mean the broker login is complete.
             </p>
           </div>
           <button type="button" onClick={onClose} className="p-1 text-neutral-500 hover:text-white" aria-label="Close">
